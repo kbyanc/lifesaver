@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.7 2003/08/16 03:00:25 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.8 2003/08/18 17:45:18 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -341,8 +341,7 @@ life_cluster_update(struct cell_cluster *cluster)
 		for (cellX = 0; cellX < CLUSTERSIZE; cellX++) {
 
 			cellval = state[cellY + 1][cellX + 1];
-			count = cellval == CELL_DEAD ? 0 : -1;
-			sum = 0;
+			count = sum = 0;
 
 			/*
 			 * Examine each neighbor; offset by 1 due to padding in
@@ -358,8 +357,11 @@ life_cluster_update(struct cell_cluster *cluster)
 			}
 
 			if (cellval != CELL_DEAD) {
-				/* Survival of existing cell. */
-				if (count == 2 || count == 3)
+				/*
+				 * Survival of existing cell.
+				 * Note that count includes the cell itself.
+				 */
+				if (count == 3 || count == 4)
 					continue;
 
 				/* Otherwise, death. */

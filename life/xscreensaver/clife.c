@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.4 2003/08/13 18:25:58 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.5 2003/08/13 18:54:40 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -60,10 +60,8 @@ static XdbeSwapInfo swapinfo;
  * Simulation parameters.
  */
 static int	 cellsize;
+static int	 celldrawsize;
 
-/* Internal simulation variables. */
-#define	CELLPAD		1	/* Number of pixels between displayed cells. */
-#define	CLUSTERSIZE	8	/* Number of cells per cluster; power-of-2. */
 
 /*
  * The following limits apply to dormant clusters.
@@ -119,6 +117,7 @@ enum direction {
  * The dormant counter is also used to avoid processing clusters which contain
  * static debris, as is common in life.
  */
+#define	CLUSTERSIZE	8	/* Number of cells per cluster; power-of-2. */
 struct cell_cluster {
 	short			 numcells;
 	unsigned char		 dormant;	/* Iterations unchanged. */
@@ -163,16 +162,14 @@ static struct cell_cluster *life_cluster_new(int clusterX, int clusterY);
 void
 life_state_init(void)
 {
-	int displaysize;
 
 	cellsize = get_integer_resource("cellsize", "Integer");
 	if (cellsize < 1)
 		cellsize = 1;
 
 	for (;;) {
-		displaysize = cellsize + CELLPAD;
-		cell_numX = xgwa.width / displaysize;
-		cell_numY = xgwa.height / displaysize;
+		cell_numX = xgwa.width / cellsize;
+		cell_numY = xgwa.height / cellsize;
 
 		cluster_numX = cell_numX / CLUSTERSIZE;
 		cluster_numY = cell_numY / CLUSTERSIZE;
@@ -190,6 +187,14 @@ life_state_init(void)
 	}
 
 	/*
+	 * Adjust size of drawn cell to account for any cell border.
+	 */
+	celldrawsize = cellsize;
+	if (celldrawsize > 1 &&
+	    get_boolean_resource("cellborder", "Boolean"))
+		celldrawsize--;
+
+	/*
 	 * Recompute the number of cells as a multiple of the number of
 	 * clusters.
 	 */
@@ -197,8 +202,8 @@ life_state_init(void)
 	cell_numY = cluster_numY * CLUSTERSIZE;
 
 	/* Center the cell display. */
-	display_offsetX = (xgwa.width - (cell_numX * displaysize)) / 2;
-	display_offsetY = (xgwa.height - (cell_numY * displaysize)) / 2;
+	display_offsetX = (xgwa.width - (cell_numX * cellsize)) / 2;
+	display_offsetY = (xgwa.height - (cell_numY * cellsize)) / 2;
 
 	/*
 	 * Allocate the cluster lookup table.  Initialize all pointers to
@@ -598,11 +603,11 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 	cellidx = 0;
 	for (cellY = 0, yoffset = ystart;
 	     cellY < CLUSTERSIZE;
-	     cellY++, yoffset += cellsize + CELLPAD) {
+	     cellY++, yoffset += cellsize) {
 
 		for (cellX = 0, xoffset = xstart;
 		     cellX < CLUSTERSIZE;
-		     cellX++, xoffset += cellsize + CELLPAD) {
+		     cellX++, xoffset += cellsize) {
 
 			cell c = cluster->cell[cellY][cellX];
 
@@ -623,7 +628,7 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 			}
 
 			XFillRectangle(dpy, buf, *context, xoffset, yoffset,
-				       cellsize, cellsize);
+				       celldrawsize, celldrawsize);
 		}
 	}
 }
@@ -909,11 +914,11 @@ life_display_update(Display *dpy, Window window)
 	clusteridx = 0;
 	for (clusterY = 0, yoffset = display_offsetY;
 	     clusterY < cluster_numY;
-	     clusterY++, yoffset += (cellsize + CELLPAD) * CLUSTERSIZE) {
+	     clusterY++, yoffset += cellsize * CLUSTERSIZE) {
 
 		for (clusterX = 0, xoffset = display_offsetX;
 		     clusterX < cluster_numX;
-		     clusterX++, xoffset += (cellsize + CELLPAD) * CLUSTERSIZE,
+		     clusterX++, xoffset += cellsize * CLUSTERSIZE,
 				 clusteridx++) {
 
 			cluster = clustertable[clusteridx];
@@ -955,7 +960,7 @@ void
 life_display_grid(Display *dpy)
 {
 	int i;
-	int s = CLUSTERSIZE * (cellsize + 1);
+	int s = CLUSTERSIZE * cellsize;
 	for (i = 1; i < cluster_numY; i++) {
 		int pos = (i * s) + display_offsetY - 1;
 		XDrawLine(dpy, buf, gc_draw,
@@ -979,7 +984,8 @@ char *defaults [] = {
 	".foreground:		white",
 	"*delay:		50000",
 	"*ncolors:		100",
-	"*cellsize:		4",
+	"*cellsize:		5",
+	"*cellborder:		True",
 	"*trails:		True",
 	"*doubleBuffer:		True",
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
@@ -993,6 +999,8 @@ XrmOptionDescRec options [] = {
 	{ "-delay",		".delay",	XrmoptionSepArg, NULL },
 	{ "-ncolors",		".ncolors",	XrmoptionSepArg, NULL },
 	{ "-cellsize",		".cellsize",	XrmoptionSepArg, NULL },
+	{ "-cellborder",	".cellborder",	XrmoptionNoArg, "True" },
+	{ "-no-cellborder",	".cellborder",	XrmoptionNoArg, "False" },
 	{ "-trails",		".trails",	XrmoptionNoArg, "True" },
 	{ "-no-trails",		".trails",	XrmoptionNoArg, "False" },
 	{ "-db",		".doubleBuffer", XrmoptionNoArg, "True" },

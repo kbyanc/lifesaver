@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.12 2003/08/19 19:08:09 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.13 2003/08/20 02:22:03 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -302,7 +302,7 @@ life_state_update(void)
 	}
 
 	/* Try to keep the display at least 6.25% full. */
-	if (iteration % 128 == 0 || numclusters * 16 < maxclusters)
+	if (iteration % 256 == 0 || numclusters * 16 < maxclusters)
 		life_pattern_draw();
 
 #ifdef LIFE_PRINTSTATS
@@ -775,15 +775,12 @@ life_pattern_init(void)
 			if (entry->d_type != DT_REG)
 				continue;
 
-			if (count < NUMPATTERNS)
-				pos = count;
-			else {
-				pos = random() % 100;
-				if (pos >= NUMPATTERNS)
-					continue;
-				if (patternfiles[pos] != NULL)
-					free(patternfiles[pos]);
-			}
+			pos = random() % (count + 2);	/* XXX Magic Hack */
+			if (pos >= NUMPATTERNS)
+				continue;
+
+			if (patternfiles[pos] != NULL)
+				free(patternfiles[pos]);
 
 			len = strlen(pattern_dir) + 1 + entry->d_namlen + 1;
 			patternfiles[pos] = malloc(len);
@@ -855,6 +852,7 @@ life_pattern_draw(void)
 	int color;
 	int clusterX, clusterY;
 	int clusteridx;
+	int lastneeded;
 	int tries;
 
 	/*
@@ -878,8 +876,64 @@ life_pattern_draw(void)
 	cellY = (clusterY * CLUSTERSIZE) + (random() % CLUSTERSIZE);
 	cellX = (clusterX * CLUSTERSIZE) + (random() % CLUSTERSIZE);
 
-	/* Pick a random pattern. */
-	pattern = &patterns[random() % NUMPATTERNS];
+	/*
+	 * Pick a random pattern.
+	 * Tries up to 5 times to find a pattern that fits in the amount of
+	 * empty space available.  Since we don't yet know how the pattern
+	 * will be rotated, check both dimensions for the maximum required
+	 * space.
+	 */
+	lastneeded = INT_MAX;
+	for (tries = 5; tries > 0; tries--) {
+		int needX, needY, needed;
+		int scanX, scanY;
+
+		pattern = &patterns[random() % NUMPATTERNS];
+
+		needX = ((cellX % CLUSTERSIZE) + pattern->width) / CLUSTERSIZE;
+		needY = ((cellY % CLUSTERSIZE) + pattern->height) / CLUSTERSIZE;
+		needed = needX > needY ? needX : needY;
+
+		if (needed == 1)	/* Fits in initial cluster. */
+			break;
+
+		/*
+		 * If this pattern is the same size or larger than the previous
+		 * then we don't have a chance of succeeding.
+		 */
+		if (needed >= lastneeded)
+			goto noFit;
+
+		for (needY = 1; needY < needed; needY++) {
+			scanY = clusterY + needY;
+			if (scanY >= cluster_numY)
+				scanY -= cluster_numY;
+
+			for (needX = 1; needX < needed; needX++) {
+				scanX = clusterX + needX;
+				if (scanX >= cluster_numX)
+					scanX -= cluster_numX;
+
+				clusteridx = (scanY * cluster_numX) + scanX;
+			        assert(clusteridx >= 0 &&
+				       clusteridx < maxclusters);
+				cluster = clustertable[clusteridx];
+
+				if (cluster != NULL && cluster->numcells > 0)
+					goto noFit;
+			}
+		}
+
+		/* We found a pattern which fits in the empty region. */
+		break;
+
+noFit:
+		/*
+		 * This pattern won't fit, try another pattern in the list.
+		 */
+		lastneeded = needed;
+
+	}
 	coord = pattern->coords;
 	endcoord = pattern->coords + pattern->numcoords;
 

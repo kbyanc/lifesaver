@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.10 2003/08/19 02:47:39 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.11 2003/08/19 02:55:11 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -748,6 +748,7 @@ life_pattern_init(void)
 	size_t len;
 
 	count = 0;
+	memset(patternfiles, 0, sizeof(patternfiles));
 
 	/*
 	 * First, build a list of NUMPATTERNS files to read from.  It is

@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.11 2003/08/19 02:55:11 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.12 2003/08/19 19:08:09 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -1286,7 +1286,7 @@ char *progclass = "Life";
 char *defaults [] = {
 	".background:		black",
 	".foreground:		white",
-	"*delay:		50000",
+	"*delay:		25000",
 	"*ncolors:		100",
 	"*cellSize:		5",
 	"*cellBorder:		True",

@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.6 2003/08/15 03:43:55 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.7 2003/08/16 03:00:25 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -148,7 +148,8 @@ static void	 life_cluster_update(struct cell_cluster *cluster);
 static void	 life_cluster_draw(Display *dpy, Window window,
 				   struct cell_cluster *cluster,
 				   int xoffset, int yoffset);
-static void	 life_cluster_wakeneighbors(struct cell_cluster *cluster);
+static void	 life_cluster_wakeneighbor(struct cell_cluster *cluster,
+					   int xoffset, int yoffset);
 static void	 life_cell_set(int x, int y, int color);
 
 static void	 life_random_pattern(void);
@@ -264,6 +265,16 @@ life_state_update(void)
 }
 
 
+static __inline
+void
+life_cluster_wakeneighbor(struct cell_cluster *cluster, int xoffset,
+			  int yoffset)
+{
+	life_cluster_new(cluster->clusterX + xoffset,
+			 cluster->clusterY + yoffset);
+}
+
+
 void
 life_cluster_update(struct cell_cluster *cluster)
 {
@@ -272,12 +283,13 @@ life_cluster_update(struct cell_cluster *cluster)
 	int cellX, cellY;
 	int x, y, count;
 	int cellval, color;
+	unsigned int changemapX, changemapY;
 	int deaths, births;
-	int edgechange;
 	int sum;
 	int idx;
 
-	deaths = births = edgechange = 0;
+	changemapX = changemapY = 0;
+	deaths = births = 0;
 	memset(state, CELL_DEAD, sizeof(state));
 
 	/*
@@ -325,15 +337,19 @@ life_cluster_update(struct cell_cluster *cluster)
 	/*
 	 * Now, we can calculate the current state for this cluster.
 	 */
-	for (cellY = 1; cellY < CLUSTERSIZE + 1; cellY++) {
-		for (cellX = 1; cellX < CLUSTERSIZE + 1; cellX++) {
+	for (cellY = 0; cellY < CLUSTERSIZE; cellY++) {
+		for (cellX = 0; cellX < CLUSTERSIZE; cellX++) {
 
-			cellval = state[cellY][cellX];
+			cellval = state[cellY + 1][cellX + 1];
 			count = cellval == CELL_DEAD ? 0 : -1;
 			sum = 0;
 
-			for (y = cellY - 1; y <= cellY + 1; y++) {
-				for (x = cellX - 1; x <= cellX + 1; x++) {
+			/*
+			 * Examine each neighbor; offset by 1 due to padding in
+			 * local state buffer.
+			 */
+			for (y = cellY; y <= cellY + 2; y++) {
+				for (x = cellX; x <= cellX + 2; x++) {
 					if (state[y][x] != CELL_DEAD) {
 						sum += state[y][x] - CELL_MINALIVE;
 						count++;
@@ -347,13 +363,11 @@ life_cluster_update(struct cell_cluster *cluster)
 					continue;
 
 				/* Otherwise, death. */
-				cluster->cell[cellY - 1][cellX - 1] = CELL_DEAD;
+				cluster->cell[cellY][cellX] = CELL_DEAD;
 				deaths++;
 
-				if (cellX == 1 || cellY == 1 ||
-				    cellX == CLUSTERSIZE ||
-				    cellY == CLUSTERSIZE)
-					edgechange++;
+				changemapX |= 1 << cellX;
+				changemapY |= 1 << cellY;
 
 				continue;
 			}
@@ -372,13 +386,11 @@ life_cluster_update(struct cell_cluster *cluster)
 			color = ((sum << 1) + (random() % 0x07)) / 6;
 			if (color >= colorwrap)
 				color = 0;
-			cluster->cell[cellY - 1][cellX - 1] = color + CELL_MINALIVE;
+			cluster->cell[cellY][cellX] = color + CELL_MINALIVE;
 			births++;
 
-			if (cellX == 1 || cellY == 1 ||
-			    cellX == CLUSTERSIZE ||
-			    cellY == CLUSTERSIZE)
-				edgechange++;
+			changemapX |= 1 << cellX;
+			changemapY |= 1 << cellY;
 		}
 	}
 
@@ -405,75 +417,23 @@ life_cluster_update(struct cell_cluster *cluster)
 	 * life_state_update() only scans non-dormant clusters, if we didn't
 	 * wake them then we would never detect spill-over at all.
 	 */
-	if (edgechange != 0)
-		life_cluster_wakeneighbors(cluster);
-}
-
-
-void
-life_cluster_wakeneighbors(struct cell_cluster *cluster)
-{
-	struct cell_cluster *neighbor;
-	int cellX, cellY;
-
-	if (cluster->cell[0][0] != CELL_DEAD) {
-		neighbor = life_cluster_new(cluster->clusterX - 1,
-					    cluster->clusterY - 1);
-		neighbor->dormant = 0;
+	if (changemapY & (1 << 0)) {
+		if (cluster->cell[0][0] != CELL_DEAD)
+			life_cluster_wakeneighbor(cluster, -1, -1);	/* NW */
+		life_cluster_wakeneighbor(cluster, 0, -1);		/* N */
+		if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD)
+			life_cluster_wakeneighbor(cluster, 1, -1);	/* NE */
 	}
-
-	if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD) {
-		neighbor = life_cluster_new(cluster->clusterX + 1,
-					     cluster->clusterY - 1);
-		neighbor->dormant = 0;
-	}
-
-	if (cluster->cell[CLUSTERSIZE-1][0] != CELL_DEAD) {
-		neighbor = life_cluster_new(cluster->clusterX - 1,
-					    cluster->clusterY + 1);
-		neighbor->dormant = 0;
-	}
-
-	if (cluster->cell[CLUSTERSIZE-1][CLUSTERSIZE-1] != CELL_DEAD) {
-		neighbor = life_cluster_new(cluster->clusterX + 1,
-					    cluster->clusterY + 1);
-		neighbor->dormant = 0;
-	}
-
-	for (cellX = 0; cellX < CLUSTERSIZE; cellX++) {
-		if (cluster->cell[0][cellX] == CELL_DEAD)
-			continue;
-		neighbor = life_cluster_new(cluster->clusterX,
-					    cluster->clusterY - 1);
-		neighbor->dormant = 0;
-		break;
-	}
-
-	for (cellX = 0; cellX < CLUSTERSIZE; cellX++) {
-		if (cluster->cell[CLUSTERSIZE-1][cellX] == CELL_DEAD)
-			continue;
-		neighbor = life_cluster_new(cluster->clusterX,
-					    cluster->clusterY + 1);
-		neighbor->dormant = 0;
-		break;
-	}
-
-	for (cellY = 0; cellY < CLUSTERSIZE; cellY++) {
-		if (cluster->cell[cellY][0] == CELL_DEAD)
-			continue;
-		neighbor = life_cluster_new(cluster->clusterX - 1,
-					    cluster->clusterY);
-		neighbor->dormant = 0;
-		break;
-	}
-
-	for (cellY = 0; cellY < CLUSTERSIZE; cellY++) {
-		if (cluster->cell[cellY][CLUSTERSIZE-1] == CELL_DEAD)
-			continue;
-		neighbor = life_cluster_new(cluster->clusterX + 1,
-					    cluster->clusterY);
-		neighbor->dormant = 0;
-		break;
+	if (changemapX & (1 << 0))
+		life_cluster_wakeneighbor(cluster, -1 ,0);		/* W */
+	if (changemapX & (1 << (CLUSTERSIZE-1))) 
+		life_cluster_wakeneighbor(cluster, 1, 0);		/* E */
+	if (changemapY & (1 << (CLUSTERSIZE-1))) {
+		if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD)
+			life_cluster_wakeneighbor(cluster, -1, 1);	/* SW */
+		life_cluster_wakeneighbor(cluster, 0, 1);		/* S */
+		if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD)
+			life_cluster_wakeneighbor(cluster, 1, 1);	/* SE */
 	}
 }
 
@@ -503,8 +463,11 @@ life_cluster_new(int clusterX, int clusterY)
 
 	clusteridx = (clusterY * cluster_numX) + clusterX;
 	assert(clusteridx >= 0 && clusteridx < maxclusters);
-	if (clustertable[clusteridx] != NULL)
-		return (clustertable[clusteridx]);
+	if ((cluster = clustertable[clusteridx]) != NULL) {
+		/* Matches existing cluster; wake it if it is dormant. */
+		cluster->dormant = 0;
+		return (cluster);
+	}
 
 	cluster = calloc(1, sizeof(*cluster));
 	if (cluster == NULL)
@@ -698,8 +661,24 @@ life_cell_set(int x, int y, int color)
 	cluster->numcells++;
 	numcells++;
 
-	if (x == 0 || y == 0 || x == CLUSTERSIZE - 1 || y == CLUSTERSIZE - 1)
-		life_cluster_wakeneighbors(cluster);
+	if (y == 0) {
+		if (x == 0)
+			life_cluster_wakeneighbor(cluster, -1, -1);	/* NW */
+		life_cluster_wakeneighbor(cluster, 0, -1);		/* N */
+		if (x == CLUSTERSIZE - 1)
+			life_cluster_wakeneighbor(cluster, 1, -1);	/* NE */
+	}
+	if (x == 0)
+		life_cluster_wakeneighbor(cluster, -1 ,0);		/* W */
+	if (x == CLUSTERSIZE - 1) 
+		life_cluster_wakeneighbor(cluster, 1, 0);		/* E */
+	if (y == CLUSTERSIZE - 1) {
+		if (x == 0)
+			life_cluster_wakeneighbor(cluster, -1, 1);	/* SW */
+		life_cluster_wakeneighbor(cluster, 0, 1);		/* S */
+		if (x == CLUSTERSIZE - 1)
+			life_cluster_wakeneighbor(cluster, 1, 1);	/* SE */
+	}
 }
 
 

@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.5 2003/08/13 18:54:40 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.6 2003/08/15 03:43:55 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -37,14 +37,14 @@
  */
 static int	 delay;
 static int	 numcolors;
-static int	 leavetrails;
+static int	 colorwrap;
 static int	 double_buffer;
 static int	 DBEclear;	/* Use DBE to clear buffer. */
 
 /* Internal display variables. */
 static XWindowAttributes xgwa;
-static XColor	 *colors;
-static XColor	 *trailcolors;
+static XColor	 *colors = NULL;
+static XColor	 *trailcolors = NULL;
 static GC	  gc_erase;
 static GC	  gc_draw;
 static Pixmap	  buf = NULL;	/* Current work buffer. */
@@ -81,7 +81,10 @@ static int	 celldrawsize;
 typedef	unsigned char cell;
 #define	CELL_DEAD	0
 #define	CELL_MINALIVE	1
-#define	CELL_MAXALIVE	255
+#define	CELL_MAXCOLORS	85	/* Must be less than or equal to 1/3 of the
+				 * maximum value representable by cell's type.
+				 * See note in life_display_init().
+				 */
 
 /*
  * The directions must be ordered such that direction (X) and direction
@@ -136,6 +139,7 @@ static int	 maxclusters;
 static int	 maxcells;
 static int	 cluster_numX, cluster_numY;
 static int	 cell_numX, cell_numY;
+static unsigned int iteration;
 
 
 static struct cell_cluster *life_cluster_new(int clusterX, int clusterY);
@@ -216,6 +220,7 @@ life_state_init(void)
 		exit(1);
 	numcells = 0;
 	numclusters = 0;
+	iteration = 0;
 }
 
 
@@ -244,7 +249,7 @@ life_state_update(void)
 	}
 
 	/* Try to keep the display at least 6.25% full. */
-	if (numclusters * 16 < maxclusters || random() % 128 == 0)
+	if (iteration % 128 == 0 || numclusters * 16 < maxclusters)
 		life_random_pattern();
 
 #ifdef LIFE_PRINTSTATS
@@ -254,6 +259,8 @@ life_state_update(void)
 		numactive * 100 / maxclusters,
 		numcells, maxcells);
 #endif
+
+	iteration++;
 }
 
 
@@ -264,7 +271,7 @@ life_cluster_update(struct cell_cluster *cluster)
 	struct cell_cluster *neighbor;
 	int cellX, cellY;
 	int x, y, count;
-	int occupied;
+	int cellval, color;
 	int deaths, births;
 	int edgechange;
 	int sum;
@@ -315,15 +322,14 @@ life_cluster_update(struct cell_cluster *cluster)
 		       CLUSTERSIZE * sizeof(cell));
 	}
 
-
 	/*
 	 * Now, we can calculate the current state for this cluster.
 	 */
 	for (cellY = 1; cellY < CLUSTERSIZE + 1; cellY++) {
 		for (cellX = 1; cellX < CLUSTERSIZE + 1; cellX++) {
 
-			occupied = state[cellY][cellX] != CELL_DEAD;
-			count = occupied ? -1 : 0;
+			cellval = state[cellY][cellX];
+			count = cellval == CELL_DEAD ? 0 : -1;
 			sum = 0;
 
 			for (y = cellY - 1; y <= cellY + 1; y++) {
@@ -335,11 +341,12 @@ life_cluster_update(struct cell_cluster *cluster)
 				}
 			}
 
-			if (count == 2)
-				continue;	/* No change. */
+			if (cellval != CELL_DEAD) {
+				/* Survival of existing cell. */
+				if (count == 2 || count == 3)
+					continue;
 
-			if (count != 3 && occupied) {
-				/* Cell death if occupied. */
+				/* Otherwise, death. */
 				cluster->cell[cellY - 1][cellX - 1] = CELL_DEAD;
 				deaths++;
 
@@ -350,27 +357,28 @@ life_cluster_update(struct cell_cluster *cluster)
 
 				continue;
 			}
+
 			if (count != 3)
 				continue;
 
-			if (count == 3 && !occupied) {
-				/*
-				 * Cell birth unless occupied.
-				 * Calculate color by averaging neighbors' plus
-				 * some randomness.  The color index only
-				 * increases until wrap-around.
-				 */
-				int color = (sum + random() % 4) / 3;
-				if (color >= numcolors)
-					color -= numcolors;
-				cluster->cell[cellY - 1][cellX - 1] = color + CELL_MINALIVE;
-				births++;
+			/*
+			 * Cell birth.
+			 * Calculate color by averaging neighbors' plus some
+			 * randomness.  The color index only increases until
+			 * wrap-around.  Due to integer truncation, the odds
+			 * of increasing the color are 1/4 (random % 8 must
+			 * be either 6 or 7).
+			 */
+			color = ((sum << 1) + (random() % 0x07)) / 6;
+			if (color >= colorwrap)
+				color = 0;
+			cluster->cell[cellY - 1][cellX - 1] = color + CELL_MINALIVE;
+			births++;
 
-				if (cellX == 1 || cellY == 1 ||
-				    cellX == CLUSTERSIZE ||
-				    cellY == CLUSTERSIZE)
-					edgechange++;
-			}
+			if (cellX == 1 || cellY == 1 ||
+			    cellX == CLUSTERSIZE ||
+			    cellY == CLUSTERSIZE)
+				edgechange++;
 		}
 	}
 
@@ -595,7 +603,7 @@ void
 life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 		  int xstart, int ystart)
 {
-	GC *context;
+	GC context;
 	int xoffset, yoffset;
 	int cellX, cellY;
 	int cellidx;
@@ -615,19 +623,19 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 				c = cluster->oldcell[cellY][cellX];
 				if (c == CELL_DEAD)
 					continue;
-				if (leavetrails) {
+				if (trailcolors != NULL) {
 					XSetForeground(dpy, gc_draw, trailcolors[c].pixel);
-					context = &gc_draw;
+					context = gc_draw;
 				} else {
-					context = &gc_erase;
+					context = gc_erase;
 				}
 			} else {
 				/* Live cell. */
 				XSetForeground(dpy, gc_draw, colors[c].pixel);
-				context = &gc_draw;
+				context = gc_draw;
 			}
 
-			XFillRectangle(dpy, buf, *context, xoffset, yoffset,
+			XFillRectangle(dpy, buf, context, xoffset, yoffset,
 				       celldrawsize, celldrawsize);
 		}
 	}
@@ -668,8 +676,8 @@ life_cell_set(int x, int y, int color)
 	 */
 	while (color <= CELL_MINALIVE)
 		color += numcolors;
-	while (color >= numcolors)
-		color -= numcolors;
+	while (color >= colorwrap)
+		color -= colorwrap;
 
 	/* Now convert into <cluster, cell> coordinates. */
 	clusterX = x / CLUSTERSIZE;
@@ -701,6 +709,7 @@ life_random_pattern(void)
 	struct cell_cluster *cluster;
 	int cellX, cellY;
 	int color;
+	unsigned int randbits;
 	int clusterX, clusterY;
 	int clusteridx;
 	int tries;
@@ -735,55 +744,59 @@ life_random_pattern(void)
 	 */
 
 	color = random() % numcolors;
+	randbits = random();
+
+#define RANDBIT() ((randbits >>= 1) & 0x01)
 
 	switch (random() % 4) {
 	case 0:
 		/* Rabbits pattern. */
-		life_cell_set(cellX,     cellY,     color + random() % 8);
-		life_cell_set(cellX + 4, cellY,     color + random() % 8);
-		life_cell_set(cellX + 5, cellY,     color + random() % 8);
-		life_cell_set(cellX + 6, cellY,     color + random() % 8);
-		life_cell_set(cellX,     cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 1, cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 2, cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 5, cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 1, cellY + 2, color + random() % 8);
+		life_cell_set(cellX,     cellY,     color += RANDBIT());
+		life_cell_set(cellX + 4, cellY,     color += RANDBIT());
+		life_cell_set(cellX + 5, cellY,     color += RANDBIT());
+		life_cell_set(cellX + 6, cellY,     color += RANDBIT());
+		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 1, cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 2, cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 5, cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 1, cellY + 2, color += RANDBIT());
 		break;
 
 	case 1:
 		/* B-heptomino pattern. */
-		life_cell_set(cellX + 1, cellY,     color + random() % 8);
-		life_cell_set(cellX,     cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 1, cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 2, cellY + 1, color + random() % 8);
+		life_cell_set(cellX + 1, cellY,     color += RANDBIT());
+		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 1, cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 2, cellY + 1, color += RANDBIT());
 
-		life_cell_set(cellX,     cellY + 2, color + random() % 8);
-		life_cell_set(cellX + 2, cellY + 2, color + random() % 8);
-		life_cell_set(cellX + 3, cellY + 2, color + random() % 8);
+		life_cell_set(cellX,     cellY + 2, color += RANDBIT());
+		life_cell_set(cellX + 2, cellY + 2, color += RANDBIT());
+		life_cell_set(cellX + 3, cellY + 2, color += RANDBIT());
 		break;
 
 	case 2:
 		/* Simple glider; good for cleaning up. */
-		life_cell_set(cellX,     cellY,     color + random() % 8);
-		life_cell_set(cellX + 1, cellY,     color + random() % 8);
-		life_cell_set(cellX + 2, cellY,     color + random() % 8);
-		life_cell_set(cellX,     cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 1, cellY + 2, color + random() % 8);
+		life_cell_set(cellX,     cellY,     color += RANDBIT());
+		life_cell_set(cellX + 1, cellY,     color += RANDBIT());
+		life_cell_set(cellX + 2, cellY,     color += RANDBIT());
+		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 1, cellY + 2, color += RANDBIT());
 		break;
 
 	case 3:
 		/* Another glider, different orientation. */
-		life_cell_set(cellX + 2, cellY,     color + random() % 8);
-		life_cell_set(cellX + 1, cellY,     color + random() % 8);
-		life_cell_set(cellX,     cellY,     color + random() % 8);
-		life_cell_set(cellX,     cellY + 1, color + random() % 8);
-		life_cell_set(cellX + 1, cellY + 2, color + random() % 8);
+		life_cell_set(cellX + 2, cellY,     color += RANDBIT());
+		life_cell_set(cellX + 1, cellY,     color += RANDBIT());
+		life_cell_set(cellX,     cellY,     color += RANDBIT());
+		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
+		life_cell_set(cellX + 1, cellY + 2, color += RANDBIT());
 		break;
 
 	default:
 		assert(0);
 		/* NOTREACHED */
 	}
+#undef RANDBIT
 }
 
 
@@ -791,7 +804,8 @@ void
 life_display_init(Display *dpy, Window window)
 {
 	XGCValues gcv;
-	int coloridx;
+	int leavetrails;
+	int i;
 
 	delay = get_integer_resource("delay", "Integer");
 	if (delay < 0)
@@ -800,8 +814,6 @@ life_display_init(Display *dpy, Window window)
 	numcolors = get_integer_resource("ncolors", "Integer");
 	if (numcolors < 2)
 		numcolors = 2;
-	if (numcolors > CELL_MAXALIVE)
-		numcolors = CELL_MAXALIVE;
 
 	leavetrails = get_boolean_resource("trails", "Boolean");
 	if (numcolors == 2)
@@ -812,47 +824,94 @@ life_display_init(Display *dpy, Window window)
 
 	XGetWindowAttributes(dpy, window, &xgwa);
 
-	coloridx = random() % 360;
+
+	/*
+	 * Allocate colors for live cells and, optionally, cell trails.
+	 * Note that in both maps we leave index 0 as NULL.  We use index 0 as
+	 * a dead-cell identifier so a) we want to catch references to it as a
+	 * color and b) otherwise we would waste an allocated color.
+	 */
 	if (leavetrails) {
 		/*
-		 * Create a dark color gradient to use for the trails.  The
-		 * parameters to make_color_loop() must match those for the
-		 * main color loop below.
-		 * Note that in both maps we leave index 0 as NULL.  We use
-		 * index 0 as a dead-cell identifier so a) we want to catch
-		 * references to it as a color and b) otherwise we would waste
-		 * an allocated color.
+		 * Allocate half of ncolors to the color trails and the other
+		 * half to the live cells.
 		 */
-		numcolors /= 2;		/* Half the colors for trails. */
-		if (numcolors > CELL_MAXALIVE - CELL_MINALIVE)
-			numcolors = CELL_MAXALIVE - CELL_MINALIVE;
-		trailcolors = calloc(sizeof(XColor), numcolors + CELL_MINALIVE);
-		make_color_loop(dpy, xgwa.colormap,
-				coloridx,		1,	0.4,
-				(coloridx + 120) % 360,	1,	0.4,
-				(coloridx + 240) % 360,	1,	0.4,
-				&trailcolors[CELL_MINALIVE], &numcolors,
-				True	/* allocate */,
-				False	/* writable */);
+		numcolors /= 2;
 	}
 
-	if (numcolors > CELL_MAXALIVE - CELL_MINALIVE)
-		numcolors = CELL_MAXALIVE - CELL_MINALIVE;
+	if (numcolors > CELL_MAXCOLORS)
+		numcolors = CELL_MAXCOLORS;
 
+	/*
+	 * Allocate 3 times as many color pointers as we allocate colors.
+	 * When a new cell is born, we average the color of the 3 neighbors
+	 * (plus some randomness).  However, when the neighbors' colors
+	 * approach numcolors, the newborn's color may wrap back to 0.  The
+	 * next newborn will average the 0 with the other surviving cells and
+	 * get a value of (numcolors * 2/3).  Even with a closed color map,
+	 * this causes a visual discontinuity that is really obvious with
+	 * gliders.  To work around the problem, we make the color map repeat
+	 * 3 times so that, despite the numeric jump, there is no visual
+	 * incoherence.
+	 */
+	colors = calloc(sizeof(XColor), (numcolors + CELL_MINALIVE) * 3);
+	if (leavetrails)
+		trailcolors = calloc(sizeof(XColor), (numcolors + CELL_MINALIVE) * 3);
+
+alloccolors:
 	/* Main color gradient: used for drawing live cells. */
-	colors = calloc(sizeof(XColor), numcolors + CELL_MINALIVE);
-	make_color_loop(dpy, xgwa.colormap,
-			coloridx,		1,	1,
-			(coloridx + 120) % 360,	1,	1,
-			(coloridx + 240) % 360,	1,	1,
+	make_color_ramp(dpy, xgwa.colormap,
+			0, 1, 1,
+			360, 1, 1,
 			&colors[CELL_MINALIVE], &numcolors,
+			False	/* closed */,
 			True	/* allocate */,
 			False	/* writable */);
 
+	/* Make dimmer variants for trails. */
+	if (trailcolors != NULL) {
+		double saturation, value;
+		int hue;
+
+		for (i = 1; i <= numcolors; i++) {
+			rgb_to_hsv(colors[i].red, colors[i].green, colors[i].blue,
+				   &hue, &saturation, &value);
+			hsv_to_rgb(hue, saturation, value * 0.40,
+				   &trailcolors[i].red, &trailcolors[i].green, &trailcolors[i].blue);
+
+			if (XAllocColor(dpy, xgwa.colormap, &trailcolors[i]))
+				continue;
+			/*
+			 * Error occurred allocating color.  Reduce the number
+			 * we are trying to allocate and try again.
+			 */
+			free_colors(dpy, xgwa.colormap, colors, numcolors);
+			free_colors(dpy, xgwa.colormap, trailcolors, i);
+			
+			numcolors--;
+			if (numcolors <= 0)
+				exit (1);
+			goto alloccolors;	/* XXX Evil. */
+		}
+	}
+
 	/*
-	 * XXX Should handle case where number of trail colors allocated
-	 *     doesn't match the number of live cell colors allocated.
+	 * Duplicate color pointers so that all colors appear in the list(s)
+	 * 3 times.
 	 */
+	colorwrap = numcolors * 3;
+	for (i = 0; i < numcolors; i++) {
+		colors[(numcolors * 2) + i + CELL_MINALIVE] =
+		    colors[numcolors + i + CELL_MINALIVE] =
+		    colors[i + CELL_MINALIVE];
+	}
+	if (trailcolors != NULL) {
+		for (i = 0; i < numcolors; i++) {
+			trailcolors[(numcolors * 2) + i + CELL_MINALIVE] =
+			    trailcolors[numcolors + i + CELL_MINALIVE] =
+			    trailcolors[i + CELL_MINALIVE];
+		}
+	}
 
 	if (double_buffer) {
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION

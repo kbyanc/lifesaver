@@ -1,0 +1,106 @@
+.\" $kbyanc: life/xscreensaver/clife.man,v 1.1 2003/08/19 19:43:04 kbyanc Exp $
+.TH XScreenSaver 1 "19-Aug-03" "X Version 11"
+.SH NAME
+clife - colorized Life simulation.
+.SH SYNOPSIS
+.B clife
+[\-display \fIhost:display.screen\fP]
+[\-visual \fIvisual\fP]
+[\-window]
+[\-root]
+[\-delay \fInumber\fP]
+[\-ncolors \fInumber\fP]
+[\-cellsize \fInumber\fP]
+[\-no-cellborder]
+[\-no-trails]
+[\-no-db]
+[\-patterns \fIpath\fP]
+.SH DESCRIPTION
+Colorized version of Conway's game of life.
+Follows standard rules in which new cells are born when there are exactly 3
+neighbors; the color of the new cell is the average of the 3 neighbors plus
+some small random offset.
+Existing cells survive if there are 2 or 3 neighbors, otherwise they die.
+.PP
+The universe is initially populated with several random patterns.
+Periodically, additional patterns may be added to the universe at random.
+In other words: this is a screen hack, not a research tool.
+.SH OPTIONS
+.TP 8
+.B \-visual \fIvisual\fP
+Specify which visual to use.  Legal values are the name of a visual class,
+or the id number (decimal or hex) of a specific visual.
+.TP 8
+.B \-window
+Draw on a newly-created window.  This is the default.
+.TP 8
+.B \-root
+Draw on the root window.
+.TP 8
+.B \-delay \fInumber\fP
+Per-frame delay, in microseconds.  Default: 10000 (0.01 seconds).
+.TP 8
+.B \-ncolors \fInumber\fP
+Number of colors; note that when trails are enabled (the default), half of
+the colors are allocated to the trails and half to the cells themselves.
+Default: 100.
+Maximum: 170.
+.TP 8
+.B \-cellsize \fInumber\fP
+The height and width of cells in pixels.
+Cells are always square.
+Default: 5.
+.TP 8
+.B \-cellborder | \-no-cellborder
+Whether or not to draw a border between cells.
+This border is subtracted from the cells' size; if the cell size is 1 pixel,
+this option is ignored.
+Enabled by default.
+.TP 8
+.B \-trails | \-no-trails
+Whether or not cells leave trails when they die.
+This is purely a visual effect and does not affect the simulation.
+Enabling this option allocates half of the available colors to drawing trails.
+Enabled by default.
+.TP 8
+.B \-db | \-no-db
+Whether to double buffer.
+.TP 8
+.B \-patterns \fIpath\fP
+The \fIclife\fP program has 3 simple Life patterns builtin: the standard
+glider, B-heptomino, and rabbits patterns.
+This option specifies a path to find additional Life 1.05 format pattern
+files, from which \fIclife\fP will select patterns at random at startup.
+Multiple search directories may be specified by separating them with colons.
+If you get bored with the builtin patterns, a good collection of Life 1.05
+pattern files can be found at: http://www.ibiblio.org/lifepatterns/#patterns
+.SH ENVIRONMENT
+.PP
+.TP 8
+.B DISPLAY
+to get the default host and display number.
+.TP 8
+.B XENVIRONMENT
+to get the name of a resource file that overrides the global resources
+stored in the RESOURCE_MANAGER property.
+.SH SEE ALSO
+.BR X (1),
+.BR xscreensaver (1)
+.SH BUGS
+The pattern file parser is pretty primitive: it only reads Life 1.05 format,
+and only just barely at that.
+If a file other than a Life 1.05 pattern file is in any of the directories
+specified in the patterns path, \fIclife\fP will naively try to load it as
+a pattern file.
+Note that few of the patterns bundled with \fIxlife\fP are in Life 1.05 format,
+so please don't try to run \fIclife\fP with \fIxlife\fP's patterns.
+.SH COPYRIGHT
+Copyright \(co 2003 by Kelly Yancey.  Permission to use, copy, modify, 
+distribute, and sell this software and its documentation for any purpose is 
+hereby granted without fee, provided that the above copyright notice appear 
+in all copies and that both that copyright notice and this permission notice
+appear in supporting documentation.  No representations are made about the 
+suitability of this software for any purpose.  It is provided "as is" without
+express or implied warranty.
+.SH AUTHOR
+Kelly Yancey.

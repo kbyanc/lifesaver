@@ -9,13 +9,15 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.9 2003/08/18 19:48:10 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.10 2003/08/19 02:47:39 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
 #define NDEBUG
 
 #include <assert.h>
+#include <dirent.h>
+#include <machine/limits.h>
 #include "screenhack.h"
 
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
@@ -25,11 +27,13 @@
 
 /*
  * Additional debugging aids:
- *	LIFE_SHOWGRID	- Define to show cell cluster boundaries.
- *	LIFE_PRINTSTATS	- Define to have cell/cluster stats printed.
+ *	LIFE_SHOWGRID	   - Define to show cell cluster boundaries.
+ *	LIFE_PRINTSTATS	   - Define to have cell/cluster stats printed.
+ *	LIFE_PRINTPATTERNS - Define to print which patterns were loaded.
  */
 #undef LIFE_SHOWGRID
 #undef LIFE_PRINTSTATS
+#undef LIFE_PRINTPATTERNS
 
 
 /*
@@ -57,10 +61,53 @@ static XdbeSwapInfo swapinfo;
 
 
 /*
- * Simulation parameters.
+ * Data structures for representing Life patterns.
+ * We will attempt to load any Life 1.05 format pattern files found in the
+ * path specified via the -patterns command-line parameter or the patternPath
+ * resource.  To keep things interesting for people who do not have a pattern
+ * collection to pull from, we include 3 built-in patterns.  Please don't add
+ * more.  If you want more patterns, store them in files and put the directory
+ * to find those files in your patternPath.
+ *
+ * The number of cells for a single pattern is limited to a maximum of
+ * PATTERN_MAXCOORDS cells.
  */
-static int	 cellsize;
-static int	 celldrawsize;
+#define	PATTERN_MAXCOORDS	256
+struct coords {
+	int x, y;
+};
+static struct coords builtin_pattern_coords[] = {
+#define	BUILTIN_PATTERN_GLIDER	(builtin_pattern_coords + 0)
+	{ 0, 0 }, { 1, 0 }, { 2, 0 },
+	{ 0, 1 },
+		  { 1, 2 },
+
+#define	BUILTIN_PATTERN_BHEPT	(builtin_pattern_coords + 5)
+		  { 1, 0 },
+	{ 0, 1 }, { 1, 1 }, { 2, 1 },
+	{ 0, 2 },	    { 2, 2 }, { 3, 2 },
+
+#define	BUILTIN_PATTERN_RABBITS	(builtin_pattern_coords + 12)
+	{ 0, 0 }, 				{ 4, 0 }, { 5, 0 }, { 6, 0 },
+	{ 0, 1 }, { 1, 1 }, { 2, 1 },			  { 5, 1 },
+		  { 1, 2 },
+
+	/* Offset 21: End-of-List */
+};
+
+struct pattern {
+	unsigned int width, height;
+	unsigned int numcoords;
+	struct coords *coords;
+};
+
+#define	NUMPATTERNS		16
+#define	NUMPATTERNSBUILTIN	3	/* Please don't add more. */
+static struct pattern patterns[NUMPATTERNS] = {
+	{  3,  3,  5, BUILTIN_PATTERN_GLIDER },
+	{  4,  3,  7, BUILTIN_PATTERN_BHEPT },
+	{  7,  3,  9, BUILTIN_PATTERN_RABBITS }
+};
 
 
 /*
@@ -133,12 +180,14 @@ struct cell_cluster {
 
 static struct cell_cluster **clustertable;
 
-static int	 numclusters;
-static int	 numcells;
+static int	 numclusters;	/* Number of clusters allocated. */
+static int	 numcells;	/* Number of cells in those clusters. */
 static int	 maxclusters;
 static int	 maxcells;
 static int	 cluster_numX, cluster_numY;
 static int	 cell_numX, cell_numY;
+static int	 cellsize;	/* Size of cells in pixels. */
+static int	 celldrawsize;	/* Actual number of pixels drawn per cell. */
 static unsigned int iteration;
 
 
@@ -154,6 +203,8 @@ static void	 life_cell_set(int x, int y, int color);
 
 static void	 life_pattern_init(void);
 static void	 life_pattern_draw(void);
+static int	 life_pattern_read(const char *filename,
+				   struct pattern *pattern);
 
 static void	 life_state_init(void);
 static void	 life_state_update(void);
@@ -169,7 +220,7 @@ void
 life_state_init(void)
 {
 
-	cellsize = get_integer_resource("cellsize", "Integer");
+	cellsize = get_integer_resource("cellSize", "Integer");
 	if (cellsize < 1)
 		cellsize = 1;
 
@@ -197,7 +248,7 @@ life_state_init(void)
 	 */
 	celldrawsize = cellsize;
 	if (celldrawsize > 1 &&
-	    get_boolean_resource("cellborder", "Boolean"))
+	    get_boolean_resource("cellBorder", "Boolean"))
 		celldrawsize--;
 
 	/*
@@ -664,6 +715,7 @@ life_cell_set(int x, int y, int color)
 	cluster->numcells++;
 	numcells++;
 
+	cluster->dormant = 0;
 	if (y == 0) {
 		if (x == 0)
 			life_cluster_wakeneighbor(cluster, -1, -1);	/* NW */
@@ -684,57 +736,113 @@ life_cell_set(int x, int y, int color)
 	}
 }
 
-struct coords {
-	unsigned int x, y;
-};
-static struct coords builtin_pattern_coords[] = {
-#define	BUILTIN_PATTERN_GLIDER	builtin_pattern_coords + 0
-	{ 0, 0 }, { 1, 0 }, { 2, 0 },
-	{ 0, 1 },
-		  { 1, 2 },
-
-#define	BUILTIN_PATTERN_BHEPT	builtin_pattern_coords + 5
-		  { 1, 0 },
-	{ 0, 1 }, { 1, 1 }, { 2, 1 },
-	{ 0, 2 },	    { 2, 2 }, { 3, 2 },
-
-#define	BUILTIN_PATTERN_RABBITS	builtin_pattern_coords + 12
-	{ 0, 0 }, 				{ 4, 0 }, { 5, 0 }, { 6, 0 },
-	{ 0, 1 }, { 1, 1 }, { 2, 1 },			  { 5, 1 },
-		  { 1, 2 }
-
-	/* Offset 21: End-of-List */
-};
-
-struct pattern {
-	unsigned int width, height;
-	unsigned int numcoords;
-	struct coords *coords;
-};
-
-#define	NUMPATTERNS		16
-#define	NUMPATTERNSBUILTIN	3
-static struct pattern patterns[NUMPATTERNS] = {
-	{  3,  3,  5, BUILTIN_PATTERN_GLIDER },
-	{  4,  3,  7, BUILTIN_PATTERN_BHEPT },
-	{  7,  3,  8, BUILTIN_PATTERN_RABBITS }
-};
 
 void
 life_pattern_init(void)
 {
+	char *patternfiles[NUMPATTERNS];
+	char *pattern_path;
+	char *pattern_dir;
 	int count;
 	int pos;
+	size_t len;
 
-	/* XXX This is where we'll read patterns from file. */
+	count = 0;
+
+	/*
+	 * First, build a list of NUMPATTERNS files to read from.  It is
+	 * possible that not all of the files contain usable patterns; we have
+	 * some built-in patterns, though.
+	 */
+	pattern_path = get_string_resource("patternPath", "String");
+	while ((pattern_dir = strsep(&pattern_path, ":")) != NULL) {
+		struct dirent *entry;
+		DIR *dir;
+
+		/* Trim trailing slashes off of the directory name. */
+		len = strlen(pattern_dir);
+		while (len > 0 && pattern_dir[len - 1] == '/') {
+			pattern_dir[len - 1] = '\0';
+			len--;
+		}
+
+		dir = opendir(pattern_dir);
+		if (dir == NULL)
+			continue;
+
+		while ((entry = readdir(dir)) != NULL) {
+			if (entry->d_type != DT_REG)
+				continue;
+
+			if (count < NUMPATTERNS)
+				pos = count;
+			else {
+				pos = random() % 100;
+				if (pos >= NUMPATTERNS)
+					continue;
+				if (patternfiles[pos] != NULL)
+					free(patternfiles[pos]);
+			}
+
+			len = strlen(pattern_dir) + 1 + entry->d_namlen + 1;
+			patternfiles[pos] = malloc(len);
+			if (patternfiles[pos] == NULL)
+				continue;
+
+			snprintf(patternfiles[pos], len, "%s/%s", pattern_dir,
+				 entry->d_name);
+			count++;
+		}
+
+		closedir(dir);
+	}
+
+	/*
+	 * Now, try to load a pattern from each of the selected files until we
+	 * have NUMPATTERNS (including builtins).
+	 */
+	count = NUMPATTERNSBUILTIN;
+	pos = 0;
+	while (count < NUMPATTERNS && pos < NUMPATTERNS) {
+		if (life_pattern_read(patternfiles[pos], &patterns[count])) {
+			count++;
+#ifdef LIFE_PRINTPATTERNS
+			fprintf(stderr, "Loaded pattern %s\n", patternfiles[pos]);
+#endif
+		}
+		pos++;
+	}
 
 	/* Pad out empty entries in the pattern array. */
-	for (count = NUMPATTERNSBUILTIN, pos = 0;
-	     count < NUMPATTERNS;
-	     count++, pos++) {
+	for (pos = 0; count < NUMPATTERNS; pos++, count++)
 		patterns[count] = patterns[pos];
+
+	/* Free memory allocated to filenames. */
+	for (pos = 0; pos < NUMPATTERNS; pos++) {
+		if (patternfiles[pos] != NULL)
+			free(patternfiles[pos]);
 	}
 }
+
+
+static __inline
+int
+randbit(void)
+{
+	static unsigned int randbits;
+	static int randcount = 0;
+	int rv;
+
+	if (randcount == 0) {
+		randbits = random();
+		randcount = 32;		/* Good for 32 bits. */
+	}
+
+	rv = randbits & 0x01;
+	randbits >>= 1;
+	return (rv);
+}
+
 
 void
 life_pattern_draw(void)
@@ -744,7 +852,6 @@ life_pattern_draw(void)
 	const struct coords *coord, *endcoord;
 	int cellX, cellY;
 	int color;
-	unsigned int randbits;
 	int clusterX, clusterY;
 	int clusteridx;
 	int tries;
@@ -777,44 +884,42 @@ life_pattern_draw(void)
 
 	/*
 	 * Write pattern.
-	 * XXX Currently, the randbits optimization assumes 32 or fewer
-	 * coordinates per pattern.
 	 */
 
 	color = random() % numcolors;
-	randbits = random();
-
-#define RANDBIT() ((randbits >>= 1) & 0x01)
 
 	switch (random() % 4) {
 	case 0:
 		for (; coord < endcoord; coord++) {
 			life_cell_set(cellX + coord->x, cellY + coord->y,color);
-			color += RANDBIT();
+			color += randbit();
 		}
 		break;
 
 	case 1:
+		/* Rotate 90 degrees. */
 		for (; coord < endcoord; coord++) {
-			life_cell_set(cellX + CLUSTERSIZE - 1 - coord->x,
-				      cellY + coord->y, color);
-			color += RANDBIT();
+			life_cell_set(cellX + coord->y,
+				      cellY + coord->x, color);
+			color += randbit();
 		}
 		break;
 
 	case 2:
+		/* Flip vertically. */
 		for (; coord < endcoord; coord++) {
 			life_cell_set(cellX + coord->x,
-				      cellY + CLUSTERSIZE - 1 - coord->y,color);
-			color += RANDBIT();
+				      cellY + pattern->width - coord->y,color);
+			color += randbit();
 		}
 		break;
 
 	case 3:
+		/* Rotate -90 degrees. */
 		for (; coord < endcoord; coord++) {
-			life_cell_set(cellX + CLUSTERSIZE - 1 - coord->x,
-				      cellY + CLUSTERSIZE - 1 - coord->y,color);
-			color += RANDBIT();
+			life_cell_set(cellX + pattern->width - coord->y,
+				      cellY + coord->x, color);
+			color += randbit();
 		}
 		break;
 
@@ -822,7 +927,120 @@ life_pattern_draw(void)
 		assert(0);
 		/* NOTREACHED */
 	}
-#undef RANDBIT
+}
+
+
+/*
+ * life_pattern_read() - Parse a pattern stored in a Life 1.05 format file.
+ *
+ *	If the file is an unknown format or the pattern is too large, then
+ *	returns boolean false.  Otherwise, returns boolean true and populates
+ *	the given pattern structure with data from the file.
+ *	A good collection of Life 1.05 format patterns can be found at
+ *		http://www.ibiblio.org/lifepatterns/#patterns
+ */
+int
+life_pattern_read(const char *filename, struct pattern *pattern)
+{
+	struct coords coordbuf[PATTERN_MAXCOORDS];
+	struct coords linecoord, mincoord, maxcoord;
+	struct coords *coord;
+
+	char line[128];
+	char *pos, *endptr;
+	FILE *f;
+	size_t len;
+
+	maxcoord.x = maxcoord.y = INT_MIN;
+	mincoord.x = mincoord.y = INT_MAX;
+
+	f = fopen(filename, "r");
+	if (f == NULL)
+		return (False);
+
+	pattern->numcoords = 0;
+	coord = coordbuf;
+
+	while (fgets(line, sizeof(line), f) != NULL) {
+		if (line[0] == '#') {
+			/* We only (barely) understand #P lines. */
+			if (line[1] != 'P')
+				continue;
+
+			linecoord.x = strtol(line + 2, &endptr, 10);
+			linecoord.y = strtol(endptr, &endptr, 10);
+			coord->y = linecoord.y;
+
+			if (linecoord.x < mincoord.x)
+				mincoord.x = linecoord.x;
+			if (linecoord.y < mincoord.y)
+				mincoord.y = linecoord.y;
+			continue;
+		}
+
+		coord->x = linecoord.x;
+		for (pos = line; *pos != '\0'; pos++) {
+			if (*pos == '*') {
+				if (coord->x > maxcoord.x)
+					maxcoord.x = coord->x;
+				if (coord->y > maxcoord.y)
+					maxcoord.y = coord->y;
+
+				coord++;
+				pattern->numcoords++;
+				if (pattern->numcoords == PATTERN_MAXCOORDS) {
+					/* Too many coordinates in pattern. */
+					fclose(f);
+					return (False);
+				}
+
+				/* Initialize the next coordinate. */
+				*coord = *(coord - 1);
+			}
+			coord->x++;
+		}
+		coord->y++;
+	}
+
+	fclose(f);
+
+	/* Ignore empty patterns. */
+	if (pattern->numcoords == 0)
+		return (False);
+
+	/*
+	 * Calculate the width of the pattern.
+	 * This is actually 1 less than the width, but every it is used had to
+	 * subtract 1 to get a useable value, so we just subtract the one here
+	 * and be done with it.
+	 */
+	pattern->width = maxcoord.x - mincoord.x;
+	pattern->height = maxcoord.y - mincoord.y;
+
+	/*
+	 * Don't bother with patterns which are too big to be displayed in
+	 * any meaningful manner.
+	 */
+	if (pattern->width > cell_numX / 2 ||
+	    pattern->height > cell_numY / 2)
+		return (False);
+
+	/*
+	 * Normalize the pattern's cell coordinates such that the minimum X
+	 * and Y values are both 0.
+	 */
+	for (; coord > coordbuf; coord--) {
+		coord->x -= mincoord.x;
+		coord->y -= mincoord.y;
+	}
+
+	/* Finally, copy the coordinate data into the pattern record. */
+	len = sizeof(struct coords) * pattern->numcoords;
+	pattern->coords = malloc(len);
+	if (pattern->coords == NULL)
+		return (False);
+	memcpy(pattern->coords, coordbuf, len);
+	return (True);
 }
 
 
@@ -1069,8 +1287,8 @@ char *defaults [] = {
 	".foreground:		white",
 	"*delay:		50000",
 	"*ncolors:		100",
-	"*cellsize:		5",
-	"*cellborder:		True",
+	"*cellSize:		5",
+	"*cellBorder:		True",
 	"*trails:		True",
 	"*doubleBuffer:		True",
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
@@ -1083,13 +1301,14 @@ char *defaults [] = {
 XrmOptionDescRec options [] = {
 	{ "-delay",		".delay",	XrmoptionSepArg, NULL },
 	{ "-ncolors",		".ncolors",	XrmoptionSepArg, NULL },
-	{ "-cellsize",		".cellsize",	XrmoptionSepArg, NULL },
-	{ "-cellborder",	".cellborder",	XrmoptionNoArg, "True" },
-	{ "-no-cellborder",	".cellborder",	XrmoptionNoArg, "False" },
+	{ "-cellsize",		".cellSize",	XrmoptionSepArg, NULL },
+	{ "-cellborder",	".cellBorder",	XrmoptionNoArg, "True" },
+	{ "-no-cellborder",	".cellBorder",	XrmoptionNoArg, "False" },
 	{ "-trails",		".trails",	XrmoptionNoArg, "True" },
 	{ "-no-trails",		".trails",	XrmoptionNoArg, "False" },
 	{ "-db",		".doubleBuffer", XrmoptionNoArg, "True" },
 	{ "-no-db",		".doubleBuffer", XrmoptionNoArg, "False" },
+	{ "-patterns",		".patternPath", XrmoptionSepArg, NULL },
 	{ NULL, NULL, NULL, NULL }
 };
 
@@ -1097,9 +1316,9 @@ void
 screenhack (Display *dpy, Window window)
 {
 
-	life_pattern_init();
 	life_display_init(dpy, window);
 	life_state_init();
+	life_pattern_init();
 
 #ifdef LIFE_SHOWGRID
 	life_display_grid(dpy);

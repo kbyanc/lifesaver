@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.3 2003/08/13 02:52:50 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.4 2003/08/13 18:25:58 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -64,9 +64,21 @@ static int	 cellsize;
 /* Internal simulation variables. */
 #define	CELLPAD		1	/* Number of pixels between displayed cells. */
 #define	CLUSTERSIZE	8	/* Number of cells per cluster; power-of-2. */
-#define	MAXDORMANTAGE	10	/* How long a cluster can be static before we
-				 * consider it dormant.
-				 */
+
+/*
+ * The following limits apply to dormant clusters.
+ *	LIMIT_DRAW	- Clusters dormant for more than this many iterations
+ *			  will not be drawn.  Must be at least 1.
+ *	LIMIT_UPDATE	- Clusters dormant for more than this many iterations
+ *			  will not be updated; useful for skipping static
+ *			  debris.  Must be at least 1 more than LIMIT_DRAW.
+ *	LIMIT_KEEPEMPTY	- Clusters with no cells are kept for this many cycles
+ *			  before deleting.  Should be greater than LIMIT_UPDATE.
+ */
+#define	LIMIT_DRAW	1
+#define	LIMIT_UPDATE	LIMIT_DRAW + 1
+#define	LIMIT_KEEPEMPTY	16
+
 
 typedef	unsigned char cell;
 #define	CELL_DEAD	0
@@ -214,15 +226,16 @@ life_state_update(void)
 		cluster = clustertable[clusteridx];
 		if (cluster == NULL)
 			continue;
-		if (cluster->dormant < MAXDORMANTAGE) {
+		if (cluster->dormant <= LIMIT_UPDATE) {
 			life_cluster_update(cluster);
 			numactive++;
 			continue;
 		}
-		if (cluster->numcells == 0) {
-			life_cluster_delete(cluster);
+		if (cluster->numcells != 0)
 			continue;
-		}
+		cluster->dormant++;
+		if (cluster->dormant > LIMIT_KEEPEMPTY)
+			life_cluster_delete(cluster);
 	}
 
 	/* Try to keep the display at least 6.25% full. */
@@ -904,7 +917,7 @@ life_display_update(Display *dpy, Window window)
 				 clusteridx++) {
 
 			cluster = clustertable[clusteridx];
-			if (cluster == NULL || cluster->dormant > 1)
+			if (cluster == NULL || cluster->dormant > LIMIT_DRAW)
 				continue;
 
 			life_cluster_draw(dpy, window, cluster,
@@ -990,6 +1003,7 @@ XrmOptionDescRec options [] = {
 void
 screenhack (Display *dpy, Window window)
 {
+
 	life_display_init(dpy, window);
 	life_state_init();
 

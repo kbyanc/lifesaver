@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.2 2003/08/13 00:57:09 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.3 2003/08/13 02:52:50 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -40,7 +40,6 @@ static int	 numcolors;
 static int	 leavetrails;
 static int	 double_buffer;
 static int	 DBEclear;	/* Use DBE to clear buffer. */
-static int	 Xclear;	/* Use XFillRectangle to clear buffer. */
 
 /* Internal display variables. */
 static XWindowAttributes xgwa;
@@ -48,7 +47,6 @@ static XColor	 *colors;
 static XColor	 *trailcolors;
 static GC	  gc_erase;
 static GC	  gc_draw;
-static Pixmap	  bufpage[2];	/* For software double-buffering. */
 static Pixmap	  buf = NULL;	/* Current work buffer. */
 static int	  display_offsetX, display_offsetY;
 
@@ -579,7 +577,7 @@ void
 life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 		  int xstart, int ystart)
 {
-	XColor *drawcolor;
+	GC *context;
 	int xoffset, yoffset;
 	int cellX, cellY;
 	int cellidx;
@@ -596,19 +594,22 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 			cell c = cluster->cell[cellY][cellX];
 
 			if (c == CELL_DEAD) {
-				if (!leavetrails)
-					continue;
 				c = cluster->oldcell[cellY][cellX];
 				if (c == CELL_DEAD)
 					continue;
-				drawcolor = &trailcolors[c];
+				if (leavetrails) {
+					XSetForeground(dpy, gc_draw, trailcolors[c].pixel);
+					context = &gc_draw;
+				} else {
+					context = &gc_erase;
+				}
 			} else {
 				/* Live cell. */
-				drawcolor = &colors[c];
+				XSetForeground(dpy, gc_draw, colors[c].pixel);
+				context = &gc_draw;
 			}
 
-			XSetForeground(dpy, gc_draw, drawcolor->pixel);
-			XFillRectangle(dpy, buf, gc_draw, xoffset, yoffset,
+			XFillRectangle(dpy, buf, *context, xoffset, yoffset,
 				       cellsize, cellsize);
 		}
 	}
@@ -848,13 +849,11 @@ life_display_init(Display *dpy, Window window)
 		 * to software double-buffering.
 		 */
 		if (buf == NULL) {
-			bufpage[0] = XCreatePixmap(dpy, window,
-					xgwa.width, xgwa.height, xgwa.depth);
-			bufpage[1] = XCreatePixmap(dpy, window,
-					xgwa.width, xgwa.height, xgwa.depth);
-			buf = bufpage[0];
+			buf = XCreatePixmap(dpy, window, xgwa.width,
+					    xgwa.height, xgwa.depth);
 		}
-	} else {
+	}
+	if (buf == NULL) {
 		/* If not double buffering, just draw directly to the window. */
 		buf = window;
 	}
@@ -868,30 +867,16 @@ life_display_init(Display *dpy, Window window)
 					    dpy, xgwa.colormap);
 	gc_draw = XCreateGC(dpy, buf, GCForeground|GCBackground, &gcv);
 
-	if (bufpage[0] != NULL) {
-		XFillRectangle(dpy, bufpage[0], gc_erase, 0, 0,
-		    xgwa.width, xgwa.height);
-	}
-	if (bufpage[1] != NULL) {
-		XFillRectangle(dpy, bufpage[0], gc_erase, 0, 0,
-		    xgwa.width, xgwa.height);
-	}
+	XFillRectangle(dpy, buf, gc_erase, 0, 0, xgwa.width, xgwa.height);
 
 	/*
 	 * Precompute variables used in life_display_update() which do not
 	 * change during execution.
 	 */
-	Xclear = !DBEclear && !leavetrails;
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-	Xclear = Xclear || (backbuf == NULL);
 	if (backbuf != NULL) {
 		swapinfo.swap_window = window;
-		if (leavetrails)
-			swapinfo.swap_action = XdbeCopied;
-		else if (DBEclear)
-			swapinfo.swap_action = XdbeBackground;
-		else
-			swapinfo.swap_action = XdbeUndefined;
+		swapinfo.swap_action = XdbeCopied;
 	}
 #endif
 }
@@ -904,14 +889,6 @@ life_display_update(Display *dpy, Window window)
 	int clusterX, clusterY;
 	int clusteridx;
 	int xoffset, yoffset;
-
-	/*
-	 * Clear current draw buffer.
-	 */
-	if (Xclear) {
-		XFillRectangle(dpy, buf, gc_erase, 0, 0,
-			       xgwa.width, xgwa.height);
-	}
 
 	/*
 	 * Draw cells.
@@ -927,13 +904,11 @@ life_display_update(Display *dpy, Window window)
 				 clusteridx++) {
 
 			cluster = clustertable[clusteridx];
-			if (cluster == NULL)
+			if (cluster == NULL || cluster->dormant > 1)
 				continue;
 
-			if (cluster->numcells != 0 || leavetrails) {
-				life_cluster_draw(dpy, window, cluster,
-						  xoffset, yoffset);
-			}
+			life_cluster_draw(dpy, window, cluster,
+					  xoffset, yoffset);
 
 			/*
 			 * Now that we've drawn the state; record it as the old
@@ -955,9 +930,8 @@ life_display_update(Display *dpy, Window window)
 #endif
 	if (double_buffer) {
 		/* We are doing software double-buffering. */
-		XCopyArea(dpy, buf, window, gc_erase, 0, 0,
+		XCopyArea(dpy, buf, window, gc_draw, 0, 0,
 			  xgwa.width, xgwa.height, 0, 0);
-		buf = (buf == bufpage[0] ? bufpage[1] : bufpage[0]);
 	}
 }
 

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+
+<screensaver name="clife" _label="CLife">
+
+  <command arg="-root"/>
+
+  <number id="speed" type="slider" arg="-delay %"
+          _label="Speed" _low-label="Slow" _high-label="Fast"
+          low="0" high="100000" default="25000"
+          convert="invert"/>
+
+  <number id="ncolors" type="slider" arg="-ncolors %"
+            _label="Number of Colors" _low-label="Two" _high-label="Many"
+            low="2" high="170" default="100"/>
+
+  <number id="cellsize" type="spinbutton" arg="-cellsize %"
+           _label="Cell Size" low="1" high="25" default="5"/>
+
+  <boolean id="cellborder" _label="Cell Border" arg-unset="-no-cellborder"/>
+
+  <boolean id="trails" _label="Cell Trails" arg-unset="-no-trails"/>
+
+  <string id="patterns"  _label="Pattern File Path" arg="-patterns %"/>
+
+  <_description>
+Colorized version of Conway's game of life.  Follows standard rules in
+which new cells are born when there are exactly 3 neighbors; the color
+of the new cell is the average of the 3 neighbors plus some small random offset.
+Existing cells survive if there are 2 or 3 neighbors, otherwise they die.
+Written by Kelly Yancey.
+  </_description>
+</screensaver>

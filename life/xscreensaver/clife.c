@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.1 2003/08/13 00:27:45 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.2 2003/08/13 00:57:09 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -21,6 +21,16 @@
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
 # include "xdbe.h"
 #endif /* HAVE_DOUBLE_BUFFER_EXTENSION */
+
+
+/*
+ * Additional debugging aids:
+ *	LIFE_SHOWGRID	- Define to show cell cluster boundaries.
+ *	LIFE_PRINTSTATS	- Define to have cell/cluster stats printed.
+ */
+#undef LIFE_SHOWGRID
+#undef LIFE_PRINTSTATS
+
 
 /*
  * Display parameters.
@@ -221,9 +231,12 @@ life_state_update(void)
 	if (numclusters * 16 < maxclusters || random() % 128 == 0)
 		life_random_pattern();
 
-#if 0
-	fprintf(stderr, "%03d/%03d clusters (%03d active); %05d/%05d cells\n",
-			numclusters, maxclusters, numactive, numcells, maxcells);
+#ifdef LIFE_PRINTSTATS
+	fprintf(stderr,
+		"%03d/%03d clusters (%03d active: %02d%%); %05d/%05d cells\n",
+		numclusters, maxclusters, numactive,
+		numactive * 100 / maxclusters,
+		numcells, maxcells);
 #endif
 }
 
@@ -949,6 +962,29 @@ life_display_update(Display *dpy, Window window)
 }
 
 
+#ifdef LIFE_SHOWGRID
+static
+void
+life_display_grid(Display *dpy)
+{
+	int i;
+	int s = CLUSTERSIZE * (cellsize + 1);
+	for (i = 1; i < cluster_numY; i++) {
+		int pos = (i * s) + display_offsetY - 1;
+		XDrawLine(dpy, buf, gc_draw,
+			  display_offsetX, pos,
+			  xgwa.width - display_offsetX, pos);
+	}
+	for (i = 1; i < cluster_numX; i++) {
+		int pos = (i * s) + display_offsetY - 1;
+		XDrawLine(dpy, buf, gc_draw,
+			  pos, display_offsetY,
+			  pos, xgwa.height - display_offsetY);
+	}
+}
+#endif
+
+
 char *progclass = "Life";
 
 char *defaults [] = {
@@ -983,22 +1019,8 @@ screenhack (Display *dpy, Window window)
 	life_display_init(dpy, window);
 	life_state_init();
 
-#if 0
-{ /* XXXX */
-	int i;
-	int s = CLUSTERSIZE * (cellsize + 1);
-	XSetForeground(dpy, gc_draw, colors[numcolors].pixel);
-	for (i = 1; i < cluster_numY; i++) {
-		XDrawLine(dpy, buf, gc_draw,
-			  0, (i * s) + 1,
-			  xgwa.width, (i * s) + 1);
-	}
-	for (i = 1; i < cluster_numX; i++) {
-		XDrawLine(dpy, buf, gc_draw,
-			  (i * s) + 1, 0,
-			  (i * s) + 1, xgwa.height);
-	}
-}
+#ifdef LIFE_SHOWGRID
+	life_display_grid(dpy);
 #endif
 
 	for (;;) {

@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.8 2003/08/18 17:45:18 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.9 2003/08/18 19:48:10 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -152,7 +152,8 @@ static void	 life_cluster_wakeneighbor(struct cell_cluster *cluster,
 					   int xoffset, int yoffset);
 static void	 life_cell_set(int x, int y, int color);
 
-static void	 life_random_pattern(void);
+static void	 life_pattern_init(void);
+static void	 life_pattern_draw(void);
 
 static void	 life_state_init(void);
 static void	 life_state_update(void);
@@ -251,7 +252,7 @@ life_state_update(void)
 
 	/* Try to keep the display at least 6.25% full. */
 	if (iteration % 128 == 0 || numclusters * 16 < maxclusters)
-		life_random_pattern();
+		life_pattern_draw();
 
 #ifdef LIFE_PRINTSTATS
 	fprintf(stderr,
@@ -683,11 +684,64 @@ life_cell_set(int x, int y, int color)
 	}
 }
 
+struct coords {
+	unsigned int x, y;
+};
+static struct coords builtin_pattern_coords[] = {
+#define	BUILTIN_PATTERN_GLIDER	builtin_pattern_coords + 0
+	{ 0, 0 }, { 1, 0 }, { 2, 0 },
+	{ 0, 1 },
+		  { 1, 2 },
+
+#define	BUILTIN_PATTERN_BHEPT	builtin_pattern_coords + 5
+		  { 1, 0 },
+	{ 0, 1 }, { 1, 1 }, { 2, 1 },
+	{ 0, 2 },	    { 2, 2 }, { 3, 2 },
+
+#define	BUILTIN_PATTERN_RABBITS	builtin_pattern_coords + 12
+	{ 0, 0 }, 				{ 4, 0 }, { 5, 0 }, { 6, 0 },
+	{ 0, 1 }, { 1, 1 }, { 2, 1 },			  { 5, 1 },
+		  { 1, 2 }
+
+	/* Offset 21: End-of-List */
+};
+
+struct pattern {
+	unsigned int width, height;
+	unsigned int numcoords;
+	struct coords *coords;
+};
+
+#define	NUMPATTERNS		16
+#define	NUMPATTERNSBUILTIN	3
+static struct pattern patterns[NUMPATTERNS] = {
+	{  3,  3,  5, BUILTIN_PATTERN_GLIDER },
+	{  4,  3,  7, BUILTIN_PATTERN_BHEPT },
+	{  7,  3,  8, BUILTIN_PATTERN_RABBITS }
+};
 
 void
-life_random_pattern(void)
+life_pattern_init(void)
+{
+	int count;
+	int pos;
+
+	/* XXX This is where we'll read patterns from file. */
+
+	/* Pad out empty entries in the pattern array. */
+	for (count = NUMPATTERNSBUILTIN, pos = 0;
+	     count < NUMPATTERNS;
+	     count++, pos++) {
+		patterns[count] = patterns[pos];
+	}
+}
+
+void
+life_pattern_draw(void)
 {
 	struct cell_cluster *cluster;
+	struct pattern *pattern;
+	const struct coords *coord, *endcoord;
 	int cellX, cellY;
 	int color;
 	unsigned int randbits;
@@ -716,12 +770,15 @@ life_random_pattern(void)
 	cellY = (clusterY * CLUSTERSIZE) + (random() % CLUSTERSIZE);
 	cellX = (clusterX * CLUSTERSIZE) + (random() % CLUSTERSIZE);
 
+	/* Pick a random pattern. */
+	pattern = &patterns[random() % NUMPATTERNS];
+	coord = pattern->coords;
+	endcoord = pattern->coords + pattern->numcoords;
+
 	/*
 	 * Write pattern.
-	 * XXX I would love to be able to load random patterns from file since
-	 *     there are so many great patterns out there.  But the parser for
-	 *     common formats are pretty complicated lest they be hackish
-	 *     (making this source file uglier than it is now).
+	 * XXX Currently, the randbits optimization assumes 32 or fewer
+	 * coordinates per pattern.
 	 */
 
 	color = random() % numcolors;
@@ -731,46 +788,34 @@ life_random_pattern(void)
 
 	switch (random() % 4) {
 	case 0:
-		/* Rabbits pattern. */
-		life_cell_set(cellX,     cellY,     color += RANDBIT());
-		life_cell_set(cellX + 4, cellY,     color += RANDBIT());
-		life_cell_set(cellX + 5, cellY,     color += RANDBIT());
-		life_cell_set(cellX + 6, cellY,     color += RANDBIT());
-		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 1, cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 2, cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 5, cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 1, cellY + 2, color += RANDBIT());
+		for (; coord < endcoord; coord++) {
+			life_cell_set(cellX + coord->x, cellY + coord->y,color);
+			color += RANDBIT();
+		}
 		break;
 
 	case 1:
-		/* B-heptomino pattern. */
-		life_cell_set(cellX + 1, cellY,     color += RANDBIT());
-		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 1, cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 2, cellY + 1, color += RANDBIT());
-
-		life_cell_set(cellX,     cellY + 2, color += RANDBIT());
-		life_cell_set(cellX + 2, cellY + 2, color += RANDBIT());
-		life_cell_set(cellX + 3, cellY + 2, color += RANDBIT());
+		for (; coord < endcoord; coord++) {
+			life_cell_set(cellX + CLUSTERSIZE - 1 - coord->x,
+				      cellY + coord->y, color);
+			color += RANDBIT();
+		}
 		break;
 
 	case 2:
-		/* Simple glider; good for cleaning up. */
-		life_cell_set(cellX,     cellY,     color += RANDBIT());
-		life_cell_set(cellX + 1, cellY,     color += RANDBIT());
-		life_cell_set(cellX + 2, cellY,     color += RANDBIT());
-		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 1, cellY + 2, color += RANDBIT());
+		for (; coord < endcoord; coord++) {
+			life_cell_set(cellX + coord->x,
+				      cellY + CLUSTERSIZE - 1 - coord->y,color);
+			color += RANDBIT();
+		}
 		break;
 
 	case 3:
-		/* Another glider, different orientation. */
-		life_cell_set(cellX + 2, cellY,     color += RANDBIT());
-		life_cell_set(cellX + 1, cellY,     color += RANDBIT());
-		life_cell_set(cellX,     cellY,     color += RANDBIT());
-		life_cell_set(cellX,     cellY + 1, color += RANDBIT());
-		life_cell_set(cellX + 1, cellY + 2, color += RANDBIT());
+		for (; coord < endcoord; coord++) {
+			life_cell_set(cellX + CLUSTERSIZE - 1 - coord->x,
+				      cellY + CLUSTERSIZE - 1 - coord->y,color);
+			color += RANDBIT();
+		}
 		break;
 
 	default:
@@ -1052,6 +1097,7 @@ void
 screenhack (Display *dpy, Window window)
 {
 
+	life_pattern_init();
 	life_display_init(dpy, window);
 	life_state_init();
 

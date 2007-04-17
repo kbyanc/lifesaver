@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003 Kelly Yancey (kbyanc@posi.net)
+ * Copyright (c) 2003,2007 Kelly Yancey (kbyanc@posi.net)
  *
  * Permission to use, copy, modify, distribute, and sell this software and its
  * documentation for any purpose is hereby granted without fee, provided that
@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.13 2003/08/20 02:22:03 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.14 2007/04/17 19:32:51 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -176,6 +176,7 @@ struct cell_cluster {
 	struct cell_cluster	*neighbor[NUMDIRECTIONS];
 	cell			 oldcell[CLUSTERSIZE][CLUSTERSIZE];
 	cell			 cell[CLUSTERSIZE][CLUSTERSIZE];
+	u_int8_t		 cellage[CLUSTERSIZE][CLUSTERSIZE];
 };
 
 static struct cell_cluster **clustertable;
@@ -188,6 +189,7 @@ static int	 cluster_numX, cluster_numY;
 static int	 cell_numX, cell_numY;
 static int	 cellsize;	/* Size of cells in pixels. */
 static int	 celldrawsize;	/* Actual number of pixels drawn per cell. */
+static int	 cellmaxage;	/* Cells die when they reach this age. */
 static unsigned int iteration;
 
 
@@ -201,12 +203,12 @@ static void	 life_cluster_wakeneighbor(struct cell_cluster *cluster,
 					   int xoffset, int yoffset);
 static void	 life_cell_set(int x, int y, int color);
 
-static void	 life_pattern_init(void);
+static void	 life_pattern_init(Display *dpy);
 static void	 life_pattern_draw(void);
 static int	 life_pattern_read(const char *filename,
 				   struct pattern *pattern);
 
-static void	 life_state_init(void);
+static void	 life_state_init(Display *dpy);
 static void	 life_state_update(void);
 
 static void	 life_display_init(Display *dpy, Window window);
@@ -217,10 +219,16 @@ static struct cell_cluster *life_cluster_new(int clusterX, int clusterY);
 
 
 void
-life_state_init(void)
+life_state_init(Display *dpy)
 {
 
-	cellsize = get_integer_resource("cellSize", "Integer");
+	cellmaxage = get_integer_resource(dpy, "maxAge", "Integer");
+	if (cellmaxage < 1)
+		cellmaxage = 0;
+	else if (cellmaxage > UCHAR_MAX)
+		cellmaxage = UCHAR_MAX;
+
+	cellsize = get_integer_resource(dpy, "cellSize", "Integer");
 	if (cellsize < 1)
 		cellsize = 1;
 
@@ -248,7 +256,7 @@ life_state_init(void)
 	 */
 	celldrawsize = cellsize;
 	if (celldrawsize > 1 &&
-	    get_boolean_resource("cellBorder", "Boolean"))
+	    get_boolean_resource(dpy, "cellBorder", "Boolean"))
 		celldrawsize--;
 
 	/*
@@ -289,13 +297,11 @@ life_state_update(void)
 		cluster = clustertable[clusteridx];
 		if (cluster == NULL)
 			continue;
-		if (cluster->dormant <= LIMIT_UPDATE) {
+		if (cluster->dormant < LIMIT_UPDATE) {
 			life_cluster_update(cluster);
 			numactive++;
 			continue;
 		}
-		if (cluster->numcells != 0)
-			continue;
 		cluster->dormant++;
 		if (cluster->dormant > LIMIT_KEEPEMPTY)
 			life_cluster_delete(cluster);
@@ -410,14 +416,18 @@ life_cluster_update(struct cell_cluster *cluster)
 
 			if (cellval != CELL_DEAD) {
 				/*
-				 * Survival of existing cell.
+				 * Survival of existing cell unless it has
+				 * reached its maximum age.
 				 * Note that count includes the cell itself.
 				 */
-				if (count == 3 || count == 4)
+				if ((count == 3 || count == 4) &&
+				    (cellmaxage == 0 ||
+				     ++cluster->cellage[cellY][cellX] < cellmaxage))
 					continue;
 
 				/* Otherwise, death. */
 				cluster->cell[cellY][cellX] = CELL_DEAD;
+				cluster->cellage[cellY][cellX] = 0;
 				deaths++;
 
 				changemapX |= 1 << cellX;
@@ -450,7 +460,8 @@ life_cluster_update(struct cell_cluster *cluster)
 
 	if (births == 0 && deaths == 0) {
 		/* Dormant cluster. */
-		cluster->dormant++;
+		if (cluster->numcells == 0)
+			cluster->dormant++;
 		return;
 	}
 
@@ -738,7 +749,7 @@ life_cell_set(int x, int y, int color)
 
 
 void
-life_pattern_init(void)
+life_pattern_init(Display *dpy)
 {
 	char *patternfiles[NUMPATTERNS];
 	char *pattern_path;
@@ -755,7 +766,7 @@ life_pattern_init(void)
 	 * possible that not all of the files contain usable patterns; we have
 	 * some built-in patterns, though.
 	 */
-	pattern_path = get_string_resource("patternPath", "String");
+	pattern_path = get_string_resource(dpy, "patternPath", "String");
 	while ((pattern_dir = strsep(&pattern_path, ":")) != NULL) {
 		struct dirent *entry;
 		DIR *dir;
@@ -1106,20 +1117,20 @@ life_display_init(Display *dpy, Window window)
 	int leavetrails;
 	int i;
 
-	delay = get_integer_resource("delay", "Integer");
+	delay = get_integer_resource(dpy, "delay", "Integer");
 	if (delay < 0)
 		delay = 0;
 
-	numcolors = get_integer_resource("ncolors", "Integer");
+	numcolors = get_integer_resource(dpy, "ncolors", "Integer");
 	if (numcolors < 2)
 		numcolors = 2;
 
-	leavetrails = get_boolean_resource("trails", "Boolean");
+	leavetrails = get_boolean_resource(dpy, "trails", "Boolean");
 	if (numcolors == 2)
 		leavetrails = False;
 
-	double_buffer = get_boolean_resource("doubleBuffer", "Boolean");
-	DBEclear = get_boolean_resource("useDBEClear", "Boolean");
+	double_buffer = get_boolean_resource(dpy, "doubleBuffer", "Boolean");
+	DBEclear = get_boolean_resource(dpy, "useDBEClear", "Boolean");
 
 	XGetWindowAttributes(dpy, window, &xgwa);
 
@@ -1234,13 +1245,13 @@ alloccolors:
 		buf = window;
 	}
 
-	gcv.foreground = get_pixel_resource("background", "Background",
-					    dpy, xgwa.colormap);
+	gcv.foreground = get_pixel_resource(dpy, xgwa.colormap,
+					    "background", "Background");
 	gc_erase = XCreateGC(dpy, buf, GCForeground, &gcv);
 
 	gcv.background = gcv.foreground;
-	gcv.foreground = get_pixel_resource("foreground", "Foreground",
-					    dpy, xgwa.colormap);
+	gcv.foreground = get_pixel_resource(dpy, xgwa.colormap,
+					    "foreground", "Foreground");
 	gc_draw = XCreateGC(dpy, buf, GCForeground|GCBackground, &gcv);
 
 	XFillRectangle(dpy, buf, gc_erase, 0, 0, xgwa.width, xgwa.height);
@@ -1335,13 +1346,14 @@ life_display_grid(Display *dpy)
 #endif
 
 
-char *progclass = "Life";
+char *progclass = "CLife";
 
-char *defaults [] = {
+char *clife_defaults [] = {
 	".background:		black",
 	".foreground:		white",
 	"*delay:		25000",
 	"*ncolors:		100",
+	"*maxAge:		255",
 	"*cellSize:		5",
 	"*cellBorder:		True",
 	"*trails:		True",
@@ -1353,9 +1365,10 @@ char *defaults [] = {
 	NULL
 };
 
-XrmOptionDescRec options [] = {
+XrmOptionDescRec clife_options [] = {
 	{ "-delay",		".delay",	XrmoptionSepArg, NULL },
 	{ "-ncolors",		".ncolors",	XrmoptionSepArg, NULL },
+	{ "-maxage",		".maxage",	XrmoptionSepArg, NULL },
 	{ "-cellsize",		".cellSize",	XrmoptionSepArg, NULL },
 	{ "-cellborder",	".cellBorder",	XrmoptionNoArg, "True" },
 	{ "-no-cellborder",	".cellBorder",	XrmoptionNoArg, "False" },
@@ -1367,25 +1380,54 @@ XrmOptionDescRec options [] = {
 	{ NULL, NULL, NULL, NULL }
 };
 
-void
-screenhack (Display *dpy, Window window)
+static
+void *
+clife_init(Display *dpy, Window window)
 {
-
 	life_display_init(dpy, window);
-	life_state_init();
-	life_pattern_init();
+	life_state_init(dpy);
+	life_pattern_init(dpy);
 
 #ifdef LIFE_SHOWGRID
 	life_display_grid(dpy);
 #endif
-
-	for (;;) {
-		life_display_update(dpy, window);
-		life_state_update();
-		XSync(dpy, False);
-
-		screenhack_handle_events(dpy);
-		if (delay)
-			usleep(delay);
-	}
+	return dpy;
 }
+
+
+static
+unsigned long
+clife_draw(Display *dpy, Window window, void *closure)
+{
+	life_display_update(dpy, window);
+	life_state_update();
+	return delay;
+}
+
+
+static
+void
+clife_reshape(Display *dpy, Window window, void *closure,
+		     unsigned int w, unsigned int h)
+{
+	XGetWindowAttributes(dpy, window, &xgwa);
+}
+
+
+static
+Bool
+clife_event(Display *dpy, Window window, void *closure, XEvent *event)
+{
+	return False;
+}
+
+
+static
+void
+clife_free(Display *dpy, Window window, void *closure)
+{
+	return;
+}
+
+
+XSCREENSAVER_MODULE ("CLife", clife)

@@ -12,7 +12,7 @@
 .if t .sp .5
 ..
 .\"
-.\" $kbyanc: life/xscreensaver/clife.man,v 1.2 2003/08/19 20:00:59 kbyanc Exp $
+.\" $kbyanc: life/xscreensaver/clife.man,v 1.3 2007/04/17 20:15:07 kbyanc Exp $
 .\"
 .TH XScreenSaver 1 "19-Aug-03" "X Version 11"
 .SH NAME
@@ -25,6 +25,7 @@ clife - colorized Life simulation.
 [\-root]
 [\-delay \fInumber\fP]
 [\-ncolors \fInumber\fP]
+[\-maxage \fInumber\fP]
 [\-cellsize \fInumber\fP]
 [\-no-cellborder]
 [\-no-trails]
@@ -60,6 +61,12 @@ Number of colors; note that when trails are enabled (the default), half of
 the colors are allocated to the trails and half to the cells themselves.
 Default: 100.
 Maximum: 170.
+.TP 8
+.B \-maxage \fInumber\fP
+If set to a non-zero value, cells are killed after the given number of
+turns.  This introduces a non-standard rule into the game, but helps clean
+up static debris.
+Default: 0 (no maximum).
 .TP 8
 .B \-cellsize \fInumber\fP
 The height and width of cells in pixels.
@@ -106,6 +113,7 @@ Option            Resource            Default Value
 -foreground       .foreground         white
 -delay            .delay              25000
 -ncolors          .ncolors            100
+-maxage           .maxage             0
 -cellsize         .cellSize           5
 -cellborder       .cellBorder         True
 -trails           .trails             True
@@ -124,7 +132,7 @@ a pattern file.
 Note that few of the patterns bundled with \fIxlife\fP are in Life 1.05 format,
 so please don't try to run \fIclife\fP with \fIxlife\fP's patterns.
 .SH COPYRIGHT
-Copyright \(co 2003 by Kelly Yancey.  Permission to use, copy, modify, 
+Copyright \(co 2003,2007 by Kelly Yancey.  Permission to use, copy, modify, 
 distribute, and sell this software and its documentation for any purpose is 
 hereby granted without fee, provided that the above copyright notice appear 
 in all copies and that both that copyright notice and this permission notice

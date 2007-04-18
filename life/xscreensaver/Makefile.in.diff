@@ -1,0 +1,48 @@
+--- xscreensaver-5.00.orig/hacks/Makefile.in	Mon Apr 16 19:28:56 2007
++++ xscreensaver-5.00/hacks/Makefile.in	Mon Apr 16 20:30:30 2007
+@@ -110,7 +110,7 @@
+ 		  mismunch.c pacman.c pacman_ai.c pacman_level.c \
+ 		  fuzzyflakes.c anemotaxis.c memscroller.c substrate.c \
+ 		  intermomentary.c fireworkx.c fireworkx_mmx.S fiberlamp.c \
+-		  boxfit.c interaggregate.c celtic.c
++		  boxfit.c interaggregate.c celtic.c clife.c
+ SCRIPTS		= vidwhacker webcollage ljlatest
+ 
+ # Programs that are mentioned in XScreenSaver.ad, and that have XML files,
+@@ -147,7 +147,7 @@
+ 		  mismunch.o pacman.o pacman_ai.o pacman_level.o \
+ 		  fuzzyflakes.o anemotaxis.o memscroller.o substrate.o \
+ 		  intermomentary.o fireworkx.o fiberlamp.o boxfit.o \
+-		  interaggregate.o celtic.o
++		  interaggregate.o celtic.o clife.o
+ 
+ NEXES		= attraction blitspin bouboule braid bubbles decayscreen deco \
+ 		  drift flag flame forest vines galaxy grav greynetic halo \
+@@ -168,7 +168,7 @@
+ 		  fontglide apple2 xanalogtv pong  wormhole mismunch \
+ 		  pacman fuzzyflakes anemotaxis memscroller substrate \
+ 		  intermomentary fireworkx fiberlamp boxfit interaggregate \
+-		  celtic \
++		  celtic clife \
+ 		  @JPEG_EXES@
+ SEXES		= sonar
+ JPEG_EXES	= webcollage-helper
+@@ -217,7 +217,7 @@
+ 		  wormhole.man mismunch.man pacman.man fuzzyflakes.man \
+ 		  anemotaxis.man memscroller.man substrate.man \
+ 		  intermomentary.man fireworkx.man fiberlamp.man boxfit.man \
+-		  interaggregate.man celtic.man
++		  interaggregate.man celtic.man clife.man
+ STAR		= *
+ EXTRAS		= README Makefile.in xml2man.pl .gdbinit \
+ 		  euler2d.tex \
+@@ -849,6 +849,9 @@
+ 
+ celtic:		celtic.o	$(HACK_OBJS) $(COL) $(ERASE)
+ 	$(CC_HACK) -o $@ $@.o	$(HACK_OBJS) $(COL) $(ERASE) $(HACK_LIBS)
++
++clife:		clife.o		$(HACK_OBJS) $(COL) $(DBE)
++	$(CC_HACK) -o $@ $@.o	$(HACK_OBJS) $(COL) $(DBE) $(HACK_LIBS)
+ 
+ 
+ # The rules for those hacks which follow the `xlockmore' API.

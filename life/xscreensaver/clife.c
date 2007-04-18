@@ -9,15 +9,19 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.15 2007/04/18 01:57:04 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.16 2007/04/18 02:22:13 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
 #define NDEBUG
 
+#ifdef HAVE_CONFIG_H
+# include "config.h"
+#endif
+
 #include <assert.h>
 #include <dirent.h>
-#include <machine/limits.h>
+#include <limits.h>
 #include "screenhack.h"
 
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
@@ -1313,8 +1317,9 @@ alloccolors:
 		}
 	}
 
-	st->pixmap = NULL;
-	st->buf = NULL;
+	st->pixmap = None;
+	st->buf = None;
+	st->backbuf = None;
 
 	if (st->double_buffer) {
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
@@ -1329,14 +1334,14 @@ alloccolors:
 		 * extension, or if the extension is unavailable, fall back
 		 * to software double-buffering.
 		 */
-		if (st->buf == NULL) {
+		if (st->buf == None) {
 			st->buf = XCreatePixmap(dpy, window, st->xgwa.width,
 							     st->xgwa.height,
 							     st->xgwa.depth);
 			st->pixmap = st->buf;
 		}
 	}
-	if (st->buf == NULL) {
+	if (st->buf == None) {
 		/* If not double buffering, just draw directly to the window. */
 		st->buf = window;
 	}
@@ -1358,7 +1363,7 @@ alloccolors:
 	 * change during execution.
 	 */
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-	if (st->backbuf != NULL) {
+	if (st->backbuf != None) {
 		st->swapinfo.swap_window = window;
 		st->swapinfo.swap_action = XdbeCopied;
 	}
@@ -1379,7 +1384,7 @@ life_display_free(struct state *st, Display *dpy)
 		free(st->trailcolors);
 	}
 
-	if (st->pixmap != NULL)
+	if (st->pixmap != None)
 		XFreePixmap(dpy, st->pixmap);
 }
 
@@ -1428,7 +1433,7 @@ life_display_update(struct state *st, Display *dpy, Window window)
 	 * Switch draw buffer to display buffer (if double-buffering).
 	 */
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-	if (st->backbuf != NULL) {
+	if (st->backbuf != None) {
 		XdbeSwapBuffers(dpy, &st->swapinfo, 1);
 		return;
 	}
@@ -1495,7 +1500,7 @@ const XrmOptionDescRec life_hack_options [] = {
 	{ "-db",		".doubleBuffer", XrmoptionNoArg, "True" },
 	{ "-no-db",		".doubleBuffer", XrmoptionNoArg, "False" },
 	{ "-patterns",		".patternPath", XrmoptionSepArg, NULL },
-	{ NULL, NULL, NULL, NULL }
+	{ 0, 0, 0, 0 }
 };
 
 static

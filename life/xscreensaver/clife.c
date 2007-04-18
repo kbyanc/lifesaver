@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.14 2007/04/17 19:32:51 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.15 2007/04/18 01:57:04 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -34,30 +34,6 @@
 #undef LIFE_SHOWGRID
 #undef LIFE_PRINTSTATS
 #undef LIFE_PRINTPATTERNS
-
-
-/*
- * Display parameters.
- */
-static int	 delay;
-static int	 numcolors;
-static int	 colorwrap;
-static int	 double_buffer;
-static int	 DBEclear;	/* Use DBE to clear buffer. */
-
-/* Internal display variables. */
-static XWindowAttributes xgwa;
-static XColor	 *colors = NULL;
-static XColor	 *trailcolors = NULL;
-static GC	  gc_erase;
-static GC	  gc_draw;
-static Pixmap	  buf = NULL;	/* Current work buffer. */
-static int	  display_offsetX, display_offsetY;
-
-#ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-static XdbeBackBuffer backbuf;
-static XdbeSwapInfo swapinfo;
-#endif
 
 
 /*
@@ -103,7 +79,7 @@ struct pattern {
 
 #define	NUMPATTERNS		16
 #define	NUMPATTERNSBUILTIN	3	/* Please don't add more. */
-static struct pattern patterns[NUMPATTERNS] = {
+static const struct pattern builtin_patterns[NUMPATTERNSBUILTIN] = {
 	{  3,  3,  5, BUILTIN_PATTERN_GLIDER },
 	{  4,  3,  7, BUILTIN_PATTERN_BHEPT },
 	{  7,  3,  9, BUILTIN_PATTERN_RABBITS }
@@ -179,162 +155,222 @@ struct cell_cluster {
 	u_int8_t		 cellage[CLUSTERSIZE][CLUSTERSIZE];
 };
 
-static struct cell_cluster **clustertable;
 
-static int	 numclusters;	/* Number of clusters allocated. */
-static int	 numcells;	/* Number of cells in those clusters. */
-static int	 maxclusters;
-static int	 maxcells;
-static int	 cluster_numX, cluster_numY;
-static int	 cell_numX, cell_numY;
-static int	 cellsize;	/* Size of cells in pixels. */
-static int	 celldrawsize;	/* Actual number of pixels drawn per cell. */
-static int	 cellmaxage;	/* Cells die when they reach this age. */
-static unsigned int iteration;
+struct state {
+	/*
+	 * Display parameters.
+	 */
+	int	 delay;
+	int	 numcolors;
+	int	 colorwrap;
+	int	 double_buffer;
+	int	 DBEclear;	/* Use DBE to clear buffer. */
+
+	/* Internal display variables. */
+	XWindowAttributes xgwa;
+	XColor	*colors;
+	XColor	*trailcolors;
+	GC	 gc_erase;
+	GC	 gc_draw;
+	int	 display_offsetX;
+	int	 display_offsetY;
+	Pixmap	 buf;		/* Current work buffer. */
+	Pixmap	 pixmap;	/* Backing pixmap, if any. */
+
+#ifdef HAVE_DOUBLE_BUFFER_EXTENSION
+	XdbeBackBuffer backbuf;
+	XdbeSwapInfo swapinfo;
+#endif
+
+	/*
+	 * Simulation state.
+	 */
+	struct cell_cluster **clustertable;
+
+	int	 numclusters;	/* Number of clusters allocated. */
+	int	 numcells;	/* Number of cells in those clusters. */
+	int	 maxclusters;
+	int	 maxcells;
+	int	 cluster_numX;
+	int	 cluster_numY;
+	int	 cell_numX;
+	int	 cell_numY;
+	int	 cellsize;	/* Size of cells in pixels. */
+	int	 celldrawsize;	/* Actual number of pixels drawn per cell. */
+	int	 cellmaxage;	/* Cells die when they reach this age. */
+	unsigned int iteration;
+
+	/*
+	 * Pattern data.
+	 */
+	struct pattern patterns[NUMPATTERNS];
+};
 
 
-static struct cell_cluster *life_cluster_new(int clusterX, int clusterY);
-static void	 life_cluster_delete(struct cell_cluster *cluster);
-static void	 life_cluster_update(struct cell_cluster *cluster);
-static void	 life_cluster_draw(Display *dpy, Window window,
-				   struct cell_cluster *cluster,
+static struct cell_cluster *life_cluster_new(struct state *st,
+					     int clusterX, int clusterY);
+static void	 life_cluster_delete(struct state *st,
+				     struct cell_cluster *cluster);
+static void	 life_cluster_update(struct state *st,
+				     struct cell_cluster *cluster);
+static void	 life_cluster_draw(const struct state * const st,
+				   Display *dpy, Window window,
+				   const struct cell_cluster * const cluster,
 				   int xoffset, int yoffset);
-static void	 life_cluster_wakeneighbor(struct cell_cluster *cluster,
+static void	 life_cluster_wakeneighbor(struct state *st,
+					   const struct cell_cluster *cluster,
 					   int xoffset, int yoffset);
-static void	 life_cell_set(int x, int y, int color);
+static void	 life_cell_set(struct state *st, int x, int y, int color);
 
-static void	 life_pattern_init(Display *dpy);
-static void	 life_pattern_draw(void);
-static int	 life_pattern_read(const char *filename,
+static void	 life_pattern_init(struct state *st, Display *dpy);
+static void	 life_pattern_free(struct state *st);
+static void	 life_pattern_draw(struct state *st);
+static int	 life_pattern_read(const struct state * const st,
+				   const char *filename,
 				   struct pattern *pattern);
 
-static void	 life_state_init(Display *dpy);
-static void	 life_state_update(void);
+static void	 life_state_init(struct state *st, Display *dpy);
+static void	 life_state_free(struct state *st);
+static void	 life_state_update(struct state *st);
 
-static void	 life_display_init(Display *dpy, Window window);
-static void	 life_display_update(Display *dpy, Window window);
+static void	 life_display_init(struct state *st, Display *dpy,
+				   Window window);
+static void	 life_display_free(struct state *st, Display *dpy);
+static void	 life_display_update(struct state *st,
+				     Display *dpy, Window window);
 
-
-static struct cell_cluster *life_cluster_new(int clusterX, int clusterY);
 
 
 void
-life_state_init(Display *dpy)
+life_state_init(struct state *st, Display *dpy)
 {
 
-	cellmaxage = get_integer_resource(dpy, "maxAge", "Integer");
-	if (cellmaxage < 1)
-		cellmaxage = 0;
-	else if (cellmaxage > UCHAR_MAX)
-		cellmaxage = UCHAR_MAX;
+	st->cellmaxage = get_integer_resource(dpy, "maxAge", "Integer");
+	if (st->cellmaxage < 1)
+		st->cellmaxage = 0;
+	else if (st->cellmaxage > UCHAR_MAX)
+		st->cellmaxage = UCHAR_MAX;
 
-	cellsize = get_integer_resource(dpy, "cellSize", "Integer");
-	if (cellsize < 1)
-		cellsize = 1;
+	st->cellsize = get_integer_resource(dpy, "cellSize", "Integer");
+	if (st->cellsize < 1)
+		st->cellsize = 1;
 
 	for (;;) {
-		cell_numX = xgwa.width / cellsize;
-		cell_numY = xgwa.height / cellsize;
+		st->cell_numX = st->xgwa.width / st->cellsize;
+		st->cell_numY = st->xgwa.height / st->cellsize;
 
-		cluster_numX = cell_numX / CLUSTERSIZE;
-		cluster_numY = cell_numY / CLUSTERSIZE;
+		st->cluster_numX = st->cell_numX / CLUSTERSIZE;
+		st->cluster_numY = st->cell_numY / CLUSTERSIZE;
 
-		if (cluster_numX >= 1 && cluster_numY >= 1)
+		if (st->cluster_numX >= 1 && st->cluster_numY >= 1)
 			break;
 
 		/*
 		 * The cells are too big to fit at least 1 cluster on the
 		 * display.  Reduce the cell size until a cluster fits.
 		 */
-		cellsize--;
-		if (cellsize < 0)
+		st->cellsize--;
+		if (st->cellsize < 0)
 			exit(1);
 	}
 
 	/*
 	 * Adjust size of drawn cell to account for any cell border.
 	 */
-	celldrawsize = cellsize;
-	if (celldrawsize > 1 &&
+	st->celldrawsize = st->cellsize;
+	if (st->celldrawsize > 1 &&
 	    get_boolean_resource(dpy, "cellBorder", "Boolean"))
-		celldrawsize--;
+		st->celldrawsize--;
 
 	/*
 	 * Recompute the number of cells as a multiple of the number of
 	 * clusters.
 	 */
-	cell_numX = cluster_numX * CLUSTERSIZE;
-	cell_numY = cluster_numY * CLUSTERSIZE;
+	st->cell_numX = st->cluster_numX * CLUSTERSIZE;
+	st->cell_numY = st->cluster_numY * CLUSTERSIZE;
 
 	/* Center the cell display. */
-	display_offsetX = (xgwa.width - (cell_numX * cellsize)) / 2;
-	display_offsetY = (xgwa.height - (cell_numY * cellsize)) / 2;
+	st->display_offsetX = (st->xgwa.width -
+			       (st->cell_numX * st->cellsize)) / 2;
+	st->display_offsetY = (st->xgwa.height -
+			       (st->cell_numY * st->cellsize)) / 2;
 
 	/*
 	 * Allocate the cluster lookup table.  Initialize all pointers to
 	 * NULL to indicate an empty universe.
 	 */
-	maxcells = cell_numX * cell_numY;
-	maxclusters = cluster_numX * cluster_numY;
-	clustertable = calloc(maxclusters, sizeof(*clustertable));
-	if (clustertable == NULL)
+	st->maxcells = st->cell_numX * st->cell_numY;
+	st->maxclusters = st->cluster_numX * st->cluster_numY;
+	st->clustertable = calloc(st->maxclusters,
+				  sizeof(*st->clustertable));
+	if (st->clustertable == NULL)
 		exit(1);
-	numcells = 0;
-	numclusters = 0;
-	iteration = 0;
+	st->numcells = 0;
+	st->numclusters = 0;
+	st->iteration = 0;
 }
 
 
 void
-life_state_update(void)
+life_state_free(struct state *st)
 {
+
+	free(st->clustertable);
+}
+
+
+void
+life_state_update(struct state *st)
+{
+	struct cell_cluster **clustertable = st->clustertable;
 	struct cell_cluster *cluster;
 	int clusteridx;
 	int numactive;
 
 	numactive = 0;
-	for (clusteridx = 0; clusteridx < maxclusters; clusteridx++) {
+	for (clusteridx = 0; clusteridx < st->maxclusters; clusteridx++) {
 		cluster = clustertable[clusteridx];
 		if (cluster == NULL)
 			continue;
 		if (cluster->dormant < LIMIT_UPDATE) {
-			life_cluster_update(cluster);
+			life_cluster_update(st, cluster);
 			numactive++;
 			continue;
 		}
 		cluster->dormant++;
 		if (cluster->dormant > LIMIT_KEEPEMPTY)
-			life_cluster_delete(cluster);
+			life_cluster_delete(st, cluster);
 	}
 
 	/* Try to keep the display at least 6.25% full. */
-	if (iteration % 256 == 0 || numclusters * 16 < maxclusters)
-		life_pattern_draw();
+	if (st->iteration % 256 == 0 ||
+	    st->numclusters * 16 < st->maxclusters)
+		life_pattern_draw(st);
 
 #ifdef LIFE_PRINTSTATS
 	fprintf(stderr,
 		"%03d/%03d clusters (%03d active: %02d%%); %05d/%05d cells\n",
-		numclusters, maxclusters, numactive,
-		numactive * 100 / maxclusters,
-		numcells, maxcells);
+		st->numclusters, st->maxclusters, numactive,
+		numactive * 100 / st->maxclusters,
+		st->numcells, st->maxcells);
 #endif
 
-	iteration++;
+	st->iteration++;
 }
 
 
 static __inline
 void
-life_cluster_wakeneighbor(struct cell_cluster *cluster, int xoffset,
-			  int yoffset)
+life_cluster_wakeneighbor(struct state *st, const struct cell_cluster *cluster,
+			  int xoffset, int yoffset)
 {
-	life_cluster_new(cluster->clusterX + xoffset,
+	life_cluster_new(st, cluster->clusterX + xoffset,
 			 cluster->clusterY + yoffset);
 }
 
 
 void
-life_cluster_update(struct cell_cluster *cluster)
+life_cluster_update(struct state *st, struct cell_cluster *cluster)
 {
 	static cell state[CLUSTERSIZE + 2][CLUSTERSIZE + 2];
 	struct cell_cluster *neighbor;
@@ -421,8 +457,8 @@ life_cluster_update(struct cell_cluster *cluster)
 				 * Note that count includes the cell itself.
 				 */
 				if ((count == 3 || count == 4) &&
-				    (cellmaxage == 0 ||
-				     ++cluster->cellage[cellY][cellX] < cellmaxage))
+				    (st->cellmaxage == 0 ||
+				     ++cluster->cellage[cellY][cellX] < st->cellmaxage))
 					continue;
 
 				/* Otherwise, death. */
@@ -448,7 +484,7 @@ life_cluster_update(struct cell_cluster *cluster)
 			 * be either 6 or 7).
 			 */
 			color = ((sum << 1) + (random() % 0x07)) / 6;
-			if (color >= colorwrap)
+			if (color >= st->colorwrap)
 				color = 0;
 			cluster->cell[cellY][cellX] = color + CELL_MINALIVE;
 			births++;
@@ -466,7 +502,7 @@ life_cluster_update(struct cell_cluster *cluster)
 	}
 
 	cluster->numcells += births - deaths;
-	numcells += births - deaths;
+	st->numcells += births - deaths;
 #if 0
 	fprintf(stderr, "[%p] births = %d, deaths = %d, numcells = %d\n",
 			cluster, births, deaths, cluster->numcells);
@@ -484,34 +520,38 @@ life_cluster_update(struct cell_cluster *cluster)
 	 */
 	if (changemapY & (1 << 0)) {
 		if (cluster->cell[0][0] != CELL_DEAD)
-			life_cluster_wakeneighbor(cluster, -1, -1);	/* NW */
-		life_cluster_wakeneighbor(cluster, 0, -1);		/* N */
+			life_cluster_wakeneighbor(st, cluster, -1, -1);	/* NW */
+		life_cluster_wakeneighbor(st, cluster, 0, -1);		/* N */
 		if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD)
-			life_cluster_wakeneighbor(cluster, 1, -1);	/* NE */
+			life_cluster_wakeneighbor(st, cluster, 1, -1);	/* NE */
 	}
 	if (changemapX & (1 << 0))
-		life_cluster_wakeneighbor(cluster, -1 ,0);		/* W */
+		life_cluster_wakeneighbor(st, cluster, -1 ,0);		/* W */
 	if (changemapX & (1 << (CLUSTERSIZE-1))) 
-		life_cluster_wakeneighbor(cluster, 1, 0);		/* E */
+		life_cluster_wakeneighbor(st, cluster, 1, 0);		/* E */
 	if (changemapY & (1 << (CLUSTERSIZE-1))) {
 		if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD)
-			life_cluster_wakeneighbor(cluster, -1, 1);	/* SW */
-		life_cluster_wakeneighbor(cluster, 0, 1);		/* S */
+			life_cluster_wakeneighbor(st, cluster, -1, 1);	/* SW */
+		life_cluster_wakeneighbor(st, cluster, 0, 1);		/* S */
 		if (cluster->cell[0][CLUSTERSIZE-1] != CELL_DEAD)
-			life_cluster_wakeneighbor(cluster, 1, 1);	/* SE */
+			life_cluster_wakeneighbor(st, cluster, 1, 1);	/* SE */
 	}
 }
 
 
 struct cell_cluster *
-life_cluster_new(int clusterX, int clusterY)
+life_cluster_new(struct state *st, int clusterX, int clusterY)
 {
+	struct cell_cluster **clustertable = st->clustertable;
 	struct cell_cluster *cluster;
 	struct cell_cluster *neighbor;
 	int clusteridx;
 	int neighboridx;
 	int neighborX, neighborY;
 	int x, y;
+
+	int cluster_numX = st->cluster_numX;
+	int cluster_numY = st->cluster_numY;
 
 	if (clusterX == -1)
 		clusterX += cluster_numX;
@@ -527,7 +567,7 @@ life_cluster_new(int clusterX, int clusterY)
 	assert(clusterY >= 0 && clusterY < cluster_numY);
 
 	clusteridx = (clusterY * cluster_numX) + clusterX;
-	assert(clusteridx >= 0 && clusteridx < maxclusters);
+	assert(clusteridx >= 0 && clusteridx < st->maxclusters);
 	if ((cluster = clustertable[clusteridx]) != NULL) {
 		/* Matches existing cluster; wake it if it is dormant. */
 		cluster->dormant = 0;
@@ -539,7 +579,7 @@ life_cluster_new(int clusterX, int clusterY)
 		exit (1);
 
 	clustertable[clusteridx] = cluster;
-	numclusters++;
+	st->numclusters++;
 	cluster->clusterX = clusterX;
 	cluster->clusterY = clusterY;
 
@@ -596,14 +636,14 @@ life_cluster_new(int clusterX, int clusterY)
 
 
 void
-life_cluster_delete(struct cell_cluster *cluster)
+life_cluster_delete(struct state *st, struct cell_cluster *cluster)
 {
 	struct cell_cluster *neighbor;
 	int clusteridx;
 	int neighboridx;
 
 	assert(cluster->numcells == 0);
-	assert(numclusters > 0);
+	assert(st->numclusters > 0);
 
 	for (neighboridx = 0; neighboridx < NUMDIRECTIONS; neighboridx++) {
 		neighbor = cluster->neighbor[neighboridx];
@@ -619,19 +659,22 @@ life_cluster_delete(struct cell_cluster *cluster)
 		neighbor->neighbor[NUMDIRECTIONS - 1 - neighboridx] = NULL;
 	}
 
-	clusteridx = (cluster->clusterY * cluster_numX) + cluster->clusterX;
-	clustertable[clusteridx] = NULL;
+	clusteridx = (cluster->clusterY * st->cluster_numX) +
+		     cluster->clusterX;
+	st->clustertable[clusteridx] = NULL;
+	st->numclusters--;
 	free(cluster);
-	numclusters--;
 }
 
 
-static __inline
+static
 void
-life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
+life_cluster_draw(const struct state * const st, Display *dpy, Window window,
+		  const struct cell_cluster * const cluster,
 		  int xstart, int ystart)
 {
-	GC context;
+	const XColor *trailcolors = st->trailcolors;
+	const XColor *colors = st->colors;
 	int xoffset, yoffset;
 	int cellX, cellY;
 	int cellidx;
@@ -639,12 +682,13 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 	cellidx = 0;
 	for (cellY = 0, yoffset = ystart;
 	     cellY < CLUSTERSIZE;
-	     cellY++, yoffset += cellsize) {
+	     cellY++, yoffset += st->cellsize) {
 
 		for (cellX = 0, xoffset = xstart;
 		     cellX < CLUSTERSIZE;
-		     cellX++, xoffset += cellsize) {
+		     cellX++, xoffset += st->cellsize) {
 
+			GC context = st->gc_draw;
 			cell c = cluster->cell[cellY][cellX];
 
 			if (c == CELL_DEAD) {
@@ -652,19 +696,19 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
 				if (c == CELL_DEAD)
 					continue;
 				if (trailcolors != NULL) {
-					XSetForeground(dpy, gc_draw, trailcolors[c].pixel);
-					context = gc_draw;
+					XSetForeground(dpy, st->gc_draw,
+						       trailcolors[c].pixel);
 				} else {
-					context = gc_erase;
+					context = st->gc_erase;
 				}
 			} else {
 				/* Live cell. */
-				XSetForeground(dpy, gc_draw, colors[c].pixel);
-				context = gc_draw;
+				XSetForeground(dpy, st->gc_draw,
+					       colors[c].pixel);
 			}
 
-			XFillRectangle(dpy, buf, context, xoffset, yoffset,
-				       celldrawsize, celldrawsize);
+			XFillRectangle(dpy, st->buf, context, xoffset, yoffset,
+				       st->celldrawsize, st->celldrawsize);
 		}
 	}
 }
@@ -681,7 +725,7 @@ life_cluster_draw(Display *dpy, Window window, struct cell_cluster *cluster,
  *	take care of adjusting it to avoid the CELL_DEAD "color".
  */
 void
-life_cell_set(int x, int y, int color)
+life_cell_set(struct state *st, int x, int y, int color)
 {
 	struct cell_cluster *cluster;
 	int clusterX, clusterY;
@@ -690,22 +734,22 @@ life_cell_set(int x, int y, int color)
 	 * First, handle wrapping of the X and Y coordinates.
 	 */
 	while (x < 0)
-		x += cell_numX;
-	while (x >= cell_numX)
-		x -= cell_numX;
+		x += st->cell_numX;
+	while (x >= st->cell_numX)
+		x -= st->cell_numX;
 	while (y < 0)
-		y += cell_numY;
-	while (y >= cell_numY)
-		y -= cell_numY;
+		y += st->cell_numY;
+	while (y >= st->cell_numY)
+		y -= st->cell_numY;
 
 	/*
 	 * Handle wrapping of the color coordinate also.
 	 * Note that this routine cannot be called to kill cells.
 	 */
 	while (color <= CELL_MINALIVE)
-		color += numcolors;
-	while (color >= colorwrap)
-		color -= colorwrap;
+		color += st->numcolors;
+	while (color >= st->colorwrap)
+		color -= st->colorwrap;
 
 	/* Now convert into <cluster, cell> coordinates. */
 	clusterX = x / CLUSTERSIZE;
@@ -713,7 +757,7 @@ life_cell_set(int x, int y, int color)
 	x = x % CLUSTERSIZE;
 	y = y % CLUSTERSIZE;
 
-	cluster = life_cluster_new(clusterX, clusterY);
+	cluster = life_cluster_new(st, clusterX, clusterY);
 
 	if (cluster->cell[y][x] != CELL_DEAD) {
 		/* Already a cell there.  Let's merge them. */
@@ -724,32 +768,32 @@ life_cell_set(int x, int y, int color)
 
 	cluster->cell[y][x] = color + CELL_MINALIVE;
 	cluster->numcells++;
-	numcells++;
+	st->numcells++;
 
 	cluster->dormant = 0;
 	if (y == 0) {
 		if (x == 0)
-			life_cluster_wakeneighbor(cluster, -1, -1);	/* NW */
-		life_cluster_wakeneighbor(cluster, 0, -1);		/* N */
+			life_cluster_wakeneighbor(st, cluster, -1, -1);	/* NW */
+		life_cluster_wakeneighbor(st, cluster, 0, -1);		/* N */
 		if (x == CLUSTERSIZE - 1)
-			life_cluster_wakeneighbor(cluster, 1, -1);	/* NE */
+			life_cluster_wakeneighbor(st, cluster, 1, -1);	/* NE */
 	}
 	if (x == 0)
-		life_cluster_wakeneighbor(cluster, -1 ,0);		/* W */
+		life_cluster_wakeneighbor(st, cluster, -1 ,0);		/* W */
 	if (x == CLUSTERSIZE - 1) 
-		life_cluster_wakeneighbor(cluster, 1, 0);		/* E */
+		life_cluster_wakeneighbor(st, cluster, 1, 0);		/* E */
 	if (y == CLUSTERSIZE - 1) {
 		if (x == 0)
-			life_cluster_wakeneighbor(cluster, -1, 1);	/* SW */
-		life_cluster_wakeneighbor(cluster, 0, 1);		/* S */
+			life_cluster_wakeneighbor(st, cluster, -1, 1);	/* SW */
+		life_cluster_wakeneighbor(st, cluster, 0, 1);		/* S */
 		if (x == CLUSTERSIZE - 1)
-			life_cluster_wakeneighbor(cluster, 1, 1);	/* SE */
+			life_cluster_wakeneighbor(st, cluster, 1, 1);	/* SE */
 	}
 }
 
 
 void
-life_pattern_init(Display *dpy)
+life_pattern_init(struct state *st, Display *dpy)
 {
 	char *patternfiles[NUMPATTERNS];
 	char *pattern_path;
@@ -807,16 +851,23 @@ life_pattern_init(Display *dpy)
 	}
 
 	/*
+	 * Initialize pattern list with built-in patterns.
+	 */
+	memcpy(st->patterns, builtin_patterns, sizeof(builtin_patterns));
+
+	/*
 	 * Now, try to load a pattern from each of the selected files until we
 	 * have NUMPATTERNS (including builtins).
 	 */
 	count = NUMPATTERNSBUILTIN;
 	pos = 0;
 	while (count < NUMPATTERNS && pos < NUMPATTERNS) {
-		if (life_pattern_read(patternfiles[pos], &patterns[count])) {
+		if (life_pattern_read(st, patternfiles[pos],
+				      &st->patterns[count])) {
 			count++;
 #ifdef LIFE_PRINTPATTERNS
-			fprintf(stderr, "Loaded pattern %s\n", patternfiles[pos]);
+			fprintf(stderr, "Loaded pattern %s\n",
+				patternfiles[pos]);
 #endif
 		}
 		pos++;
@@ -824,12 +875,36 @@ life_pattern_init(Display *dpy)
 
 	/* Pad out empty entries in the pattern array. */
 	for (pos = 0; count < NUMPATTERNS; pos++, count++)
-		patterns[count] = patterns[pos];
+		st->patterns[count] = st->patterns[pos];
 
 	/* Free memory allocated to filenames. */
 	for (pos = 0; pos < NUMPATTERNS; pos++) {
 		if (patternfiles[pos] != NULL)
 			free(patternfiles[pos]);
+	}
+}
+
+
+void
+life_pattern_free(struct state *st)
+{
+	struct coords *coords0;
+	int i;
+
+	/*
+	 * The pattern array is always padded out to NUMPATTERNS entries
+	 * by duplicating patterns as necessary.  In addition, the first
+	 * NUMPATTERNSBUILTIN patterns are static and do not need freeing.
+	 * As such, we free the patterns starting at index NUMPATTERNSBUILTIN
+	 * and continueing through the array until we see pattern #0
+	 * duplicated or we free NUMPATTERNS, whichever comes first.
+	 */
+	coords0 = st->patterns[0].coords;
+
+	for (i = NUMPATTERNSBUILTIN; i < NUMPATTERNS; i++) {
+		if (st->patterns[i].coords == coords0)
+			break;
+		free(st->patterns[i].coords);
 	}
 }
 
@@ -854,7 +929,7 @@ randbit(void)
 
 
 void
-life_pattern_draw(void)
+life_pattern_draw(struct state *st)
 {
 	struct cell_cluster *cluster;
 	struct pattern *pattern;
@@ -872,8 +947,8 @@ life_pattern_draw(void)
 	 * sign of a fairly sparsly populated region of the screen.
 	 */
 	for (tries = 5; tries > 0; tries--) {
-		clusteridx = random() % maxclusters;
-		cluster = clustertable[clusteridx];
+		clusteridx = random() % st->maxclusters;
+		cluster = st->clustertable[clusteridx];
 		if (cluster == NULL)
 			break;
 	}
@@ -882,8 +957,8 @@ life_pattern_draw(void)
 	if (tries == 0)
 		return;
 
-	clusterY = clusteridx / cluster_numX;
-	clusterX = clusteridx % cluster_numX;
+	clusterY = clusteridx / st->cluster_numX;
+	clusterX = clusteridx % st->cluster_numX;
 	cellY = (clusterY * CLUSTERSIZE) + (random() % CLUSTERSIZE);
 	cellX = (clusterX * CLUSTERSIZE) + (random() % CLUSTERSIZE);
 
@@ -899,7 +974,7 @@ life_pattern_draw(void)
 		int needX, needY, needed;
 		int scanX, scanY;
 
-		pattern = &patterns[random() % NUMPATTERNS];
+		pattern = &st->patterns[random() % NUMPATTERNS];
 
 		needX = ((cellX % CLUSTERSIZE) + pattern->width) / CLUSTERSIZE;
 		needY = ((cellY % CLUSTERSIZE) + pattern->height) / CLUSTERSIZE;
@@ -917,18 +992,19 @@ life_pattern_draw(void)
 
 		for (needY = 1; needY < needed; needY++) {
 			scanY = clusterY + needY;
-			if (scanY >= cluster_numY)
-				scanY -= cluster_numY;
+			if (scanY >= st->cluster_numY)
+				scanY -= st->cluster_numY;
 
 			for (needX = 1; needX < needed; needX++) {
 				scanX = clusterX + needX;
-				if (scanX >= cluster_numX)
-					scanX -= cluster_numX;
+				if (scanX >= st->cluster_numX)
+					scanX -= st->cluster_numX;
 
-				clusteridx = (scanY * cluster_numX) + scanX;
+				clusteridx = (scanY * st->cluster_numX) +
+					     scanX;
 			        assert(clusteridx >= 0 &&
-				       clusteridx < maxclusters);
-				cluster = clustertable[clusteridx];
+				       clusteridx < st->maxclusters);
+				cluster = st->clustertable[clusteridx];
 
 				if (cluster != NULL && cluster->numcells > 0)
 					goto noFit;
@@ -952,12 +1028,13 @@ noFit:
 	 * Write pattern.
 	 */
 
-	color = random() % numcolors;
+	color = random() % st->numcolors;
 
 	switch (random() % 4) {
 	case 0:
 		for (; coord < endcoord; coord++) {
-			life_cell_set(cellX + coord->x, cellY + coord->y,color);
+			life_cell_set(st, cellX + coord->x,
+					  cellY + coord->y, color);
 			color += randbit();
 		}
 		break;
@@ -965,8 +1042,8 @@ noFit:
 	case 1:
 		/* Rotate 90 degrees. */
 		for (; coord < endcoord; coord++) {
-			life_cell_set(cellX + coord->y,
-				      cellY + coord->x, color);
+			life_cell_set(st, cellX + coord->y,
+				          cellY + coord->x, color);
 			color += randbit();
 		}
 		break;
@@ -974,8 +1051,9 @@ noFit:
 	case 2:
 		/* Flip vertically. */
 		for (; coord < endcoord; coord++) {
-			life_cell_set(cellX + coord->x,
-				      cellY + pattern->width - coord->y,color);
+			life_cell_set(st, cellX + coord->x,
+					  cellY + pattern->width - coord->y,
+					  color);
 			color += randbit();
 		}
 		break;
@@ -983,8 +1061,8 @@ noFit:
 	case 3:
 		/* Rotate -90 degrees. */
 		for (; coord < endcoord; coord++) {
-			life_cell_set(cellX + pattern->width - coord->y,
-				      cellY + coord->x, color);
+			life_cell_set(st, cellX + pattern->width - coord->y,
+					  cellY + coord->x, color);
 			color += randbit();
 		}
 		break;
@@ -1006,7 +1084,8 @@ noFit:
  *		http://www.ibiblio.org/lifepatterns/#patterns
  */
 int
-life_pattern_read(const char *filename, struct pattern *pattern)
+life_pattern_read(const struct state * const st, const char *filename,
+		  struct pattern *pattern)
 {
 	struct coords coordbuf[PATTERN_MAXCOORDS];
 	struct coords linecoord, mincoord, maxcoord;
@@ -1087,8 +1166,8 @@ life_pattern_read(const char *filename, struct pattern *pattern)
 	 * Don't bother with patterns which are too big to be displayed in
 	 * any meaningful manner.
 	 */
-	if (pattern->width > cell_numX / 2 ||
-	    pattern->height > cell_numY / 2)
+	if (pattern->width > st->cell_numX / 2 ||
+	    pattern->height > st->cell_numY / 2)
 		return (False);
 
 	/*
@@ -1111,28 +1190,28 @@ life_pattern_read(const char *filename, struct pattern *pattern)
 
 
 void
-life_display_init(Display *dpy, Window window)
+life_display_init(struct state *st, Display *dpy, Window window)
 {
 	XGCValues gcv;
 	int leavetrails;
 	int i;
 
-	delay = get_integer_resource(dpy, "delay", "Integer");
-	if (delay < 0)
-		delay = 0;
+	st->delay = get_integer_resource(dpy, "delay", "Integer");
+	if (st->delay < 0)
+		st->delay = 0;
 
-	numcolors = get_integer_resource(dpy, "ncolors", "Integer");
-	if (numcolors < 2)
-		numcolors = 2;
+	st->numcolors = get_integer_resource(dpy, "ncolors", "Integer");
+	if (st->numcolors < 2)
+		st->numcolors = 2;
 
 	leavetrails = get_boolean_resource(dpy, "trails", "Boolean");
-	if (numcolors == 2)
+	if (st->numcolors == 2)
 		leavetrails = False;
 
-	double_buffer = get_boolean_resource(dpy, "doubleBuffer", "Boolean");
-	DBEclear = get_boolean_resource(dpy, "useDBEClear", "Boolean");
+	st->double_buffer = get_boolean_resource(dpy, "doubleBuffer", "Boolean");
+	st->DBEclear = get_boolean_resource(dpy, "useDBEClear", "Boolean");
 
-	XGetWindowAttributes(dpy, window, &xgwa);
+	XGetWindowAttributes(dpy, window, &st->xgwa);
 
 
 	/*
@@ -1146,11 +1225,11 @@ life_display_init(Display *dpy, Window window)
 		 * Allocate half of ncolors to the color trails and the other
 		 * half to the live cells.
 		 */
-		numcolors /= 2;
+		st->numcolors /= 2;
 	}
 
-	if (numcolors > CELL_MAXCOLORS)
-		numcolors = CELL_MAXCOLORS;
+	if (st->numcolors > CELL_MAXCOLORS)
+		st->numcolors = CELL_MAXCOLORS;
 
 	/*
 	 * Allocate 3 times as many color pointers as we allocate colors.
@@ -1164,42 +1243,53 @@ life_display_init(Display *dpy, Window window)
 	 * 3 times so that, despite the numeric jump, there is no visual
 	 * incoherence.
 	 */
-	colors = calloc(sizeof(XColor), (numcolors + CELL_MINALIVE) * 3);
-	if (leavetrails)
-		trailcolors = calloc(sizeof(XColor), (numcolors + CELL_MINALIVE) * 3);
+	st->colors = calloc(sizeof(XColor),
+			    (st->numcolors + CELL_MINALIVE) * 3);
+	if (leavetrails) {
+		st->trailcolors = calloc(sizeof(XColor),
+					 (st->numcolors + CELL_MINALIVE) * 3);
+	} else
+		st->trailcolors = NULL;
 
 alloccolors:
 	/* Main color gradient: used for drawing live cells. */
-	make_color_ramp(dpy, xgwa.colormap,
+	make_color_ramp(dpy, st->xgwa.colormap,
 			0, 1, 1,
 			360, 1, 1,
-			&colors[CELL_MINALIVE], &numcolors,
+			&st->colors[CELL_MINALIVE], &st->numcolors,
 			False	/* closed */,
 			True	/* allocate */,
 			False	/* writable */);
 
 	/* Make dimmer variants for trails. */
-	if (trailcolors != NULL) {
+	if (st->trailcolors != NULL) {
 		double saturation, value;
 		int hue;
 
-		for (i = 1; i <= numcolors; i++) {
-			rgb_to_hsv(colors[i].red, colors[i].green, colors[i].blue,
+		for (i = 1; i <= st->numcolors; i++) {
+			rgb_to_hsv(st->colors[i].red,
+				   st->colors[i].green,
+				   st->colors[i].blue,
 				   &hue, &saturation, &value);
 			hsv_to_rgb(hue, saturation, value * 0.40,
-				   &trailcolors[i].red, &trailcolors[i].green, &trailcolors[i].blue);
+				   &st->trailcolors[i].red,
+				   &st->trailcolors[i].green,
+				   &st->trailcolors[i].blue);
 
-			if (XAllocColor(dpy, xgwa.colormap, &trailcolors[i]))
+			if (XAllocColor(dpy, st->xgwa.colormap,
+					&st->trailcolors[i]))
 				continue;
 			/*
 			 * Error occurred allocating color.  Reduce the number
 			 * we are trying to allocate and try again.
 			 */
-			free_colors(dpy, xgwa.colormap, colors, numcolors);
-			free_colors(dpy, xgwa.colormap, trailcolors, i);
-			
-			numcolors--;
-			if (numcolors <= 0)
+			free_colors(dpy, st->xgwa.colormap,
+				    st->colors, st->numcolors);
+			free_colors(dpy, st->xgwa.colormap,
+				    st->trailcolors, i);
+
+			st->numcolors--;
+			if (st->numcolors <= 0)
 				exit (1);
 			goto alloccolors;	/* XXX Evil. */
 		}
@@ -1209,25 +1299,29 @@ alloccolors:
 	 * Duplicate color pointers so that all colors appear in the list(s)
 	 * 3 times.
 	 */
-	colorwrap = numcolors * 3;
-	for (i = 0; i < numcolors; i++) {
-		colors[(numcolors * 2) + i + CELL_MINALIVE] =
-		    colors[numcolors + i + CELL_MINALIVE] =
-		    colors[i + CELL_MINALIVE];
+	st->colorwrap = st->numcolors * 3;
+	for (i = 0; i < st->numcolors; i++) {
+		st->colors[(st->numcolors * 2) + i + CELL_MINALIVE] =
+		    st->colors[st->numcolors + i + CELL_MINALIVE] =
+		    st->colors[i + CELL_MINALIVE];
 	}
-	if (trailcolors != NULL) {
-		for (i = 0; i < numcolors; i++) {
-			trailcolors[(numcolors * 2) + i + CELL_MINALIVE] =
-			    trailcolors[numcolors + i + CELL_MINALIVE] =
-			    trailcolors[i + CELL_MINALIVE];
+	if (st->trailcolors != NULL) {
+		for (i = 0; i < st->numcolors; i++) {
+			st->trailcolors[(st->numcolors * 2) + i + CELL_MINALIVE] =
+			    st->trailcolors[st->numcolors + i + CELL_MINALIVE] =
+			    st->trailcolors[i + CELL_MINALIVE];
 		}
 	}
 
-	if (double_buffer) {
+	st->pixmap = NULL;
+	st->buf = NULL;
+
+	if (st->double_buffer) {
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-		backbuf = xdbe_get_backbuffer(dpy, window,
-				DBEclear ? XdbeBackground: XdbeUndefined);
-		buf = backbuf;
+		st->backbuf = xdbe_get_backbuffer(dpy, window,
+				   st->DBEclear ? XdbeBackground
+						: XdbeUndefined);
+		st->buf = st->backbuf;
 #endif /* HAVE_DOUBLE_BUFFER_EXTENSION */
 
 		/*
@@ -1235,66 +1329,90 @@ alloccolors:
 		 * extension, or if the extension is unavailable, fall back
 		 * to software double-buffering.
 		 */
-		if (buf == NULL) {
-			buf = XCreatePixmap(dpy, window, xgwa.width,
-					    xgwa.height, xgwa.depth);
+		if (st->buf == NULL) {
+			st->buf = XCreatePixmap(dpy, window, st->xgwa.width,
+							     st->xgwa.height,
+							     st->xgwa.depth);
+			st->pixmap = st->buf;
 		}
 	}
-	if (buf == NULL) {
+	if (st->buf == NULL) {
 		/* If not double buffering, just draw directly to the window. */
-		buf = window;
+		st->buf = window;
 	}
 
-	gcv.foreground = get_pixel_resource(dpy, xgwa.colormap,
+	gcv.foreground = get_pixel_resource(dpy, st->xgwa.colormap,
 					    "background", "Background");
-	gc_erase = XCreateGC(dpy, buf, GCForeground, &gcv);
+	st->gc_erase = XCreateGC(dpy, st->buf, GCForeground, &gcv);
 
 	gcv.background = gcv.foreground;
-	gcv.foreground = get_pixel_resource(dpy, xgwa.colormap,
+	gcv.foreground = get_pixel_resource(dpy, st->xgwa.colormap,
 					    "foreground", "Foreground");
-	gc_draw = XCreateGC(dpy, buf, GCForeground|GCBackground, &gcv);
+	st->gc_draw = XCreateGC(dpy, st->buf, GCForeground|GCBackground, &gcv);
 
-	XFillRectangle(dpy, buf, gc_erase, 0, 0, xgwa.width, xgwa.height);
+	XFillRectangle(dpy, st->buf, st->gc_erase, 0, 0,
+		       st->xgwa.width, st->xgwa.height);
 
 	/*
 	 * Precompute variables used in life_display_update() which do not
 	 * change during execution.
 	 */
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-	if (backbuf != NULL) {
-		swapinfo.swap_window = window;
-		swapinfo.swap_action = XdbeCopied;
+	if (st->backbuf != NULL) {
+		st->swapinfo.swap_window = window;
+		st->swapinfo.swap_action = XdbeCopied;
 	}
 #endif
 }
 
 
 void
-life_display_update(Display *dpy, Window window)
+life_display_free(struct state *st, Display *dpy)
 {
+
+	free_colors(dpy, st->xgwa.colormap, st->colors, st->numcolors);
+	free(st->colors);
+
+	if (st->trailcolors != NULL) {
+		free_colors(dpy, st->xgwa.colormap, st->trailcolors,
+			    st->numcolors);
+		free(st->trailcolors);
+	}
+
+	if (st->pixmap != NULL)
+		XFreePixmap(dpy, st->pixmap);
+}
+
+
+void
+life_display_update(struct state *st, Display *dpy, Window window)
+{
+	struct cell_cluster ** clustertable = st->clustertable;
 	struct cell_cluster *cluster;
 	int clusterX, clusterY;
 	int clusteridx;
 	int xoffset, yoffset;
 
+	int clustersize = st->cellsize * CLUSTERSIZE;
+
 	/*
 	 * Draw cells.
 	 */
 	clusteridx = 0;
-	for (clusterY = 0, yoffset = display_offsetY;
-	     clusterY < cluster_numY;
-	     clusterY++, yoffset += cellsize * CLUSTERSIZE) {
+	for (clusterY = 0, yoffset = st->display_offsetY;
+	     clusterY < st->cluster_numY;
+	     clusterY++, yoffset += clustersize) {
 
-		for (clusterX = 0, xoffset = display_offsetX;
-		     clusterX < cluster_numX;
-		     clusterX++, xoffset += cellsize * CLUSTERSIZE,
+		for (clusterX = 0, xoffset = st->display_offsetX;
+		     clusterX < st->cluster_numX;
+		     clusterX++, xoffset += clustersize,
 				 clusteridx++) {
 
 			cluster = clustertable[clusteridx];
 			if (cluster == NULL || cluster->dormant > LIMIT_DRAW)
 				continue;
 
-			life_cluster_draw(dpy, window, cluster,
+			life_cluster_draw(st, dpy, window, cluster,
 					  xoffset, yoffset);
 
 			/*
@@ -1310,15 +1428,15 @@ life_display_update(Display *dpy, Window window)
 	 * Switch draw buffer to display buffer (if double-buffering).
 	 */
 #ifdef HAVE_DOUBLE_BUFFER_EXTENSION
-	if (backbuf != NULL) {
-		XdbeSwapBuffers(dpy, &swapinfo, 1);
+	if (st->backbuf != NULL) {
+		XdbeSwapBuffers(dpy, &st->swapinfo, 1);
 		return;
 	}
 #endif
-	if (double_buffer) {
+	if (st->double_buffer) {
 		/* We are doing software double-buffering. */
-		XCopyArea(dpy, buf, window, gc_draw, 0, 0,
-			  xgwa.width, xgwa.height, 0, 0);
+		XCopyArea(dpy, st->buf, window, st->gc_draw, 0, 0,
+			  st->xgwa.width, st->xgwa.height, 0, 0);
 	}
 }
 
@@ -1326,29 +1444,29 @@ life_display_update(Display *dpy, Window window)
 #ifdef LIFE_SHOWGRID
 static
 void
-life_display_grid(Display *dpy)
+life_display_grid(const struct state * const st, Display *dpy)
 {
 	int i;
-	int s = CLUSTERSIZE * cellsize;
-	for (i = 1; i < cluster_numY; i++) {
-		int pos = (i * s) + display_offsetY - 1;
-		XDrawLine(dpy, buf, gc_draw,
-			  display_offsetX, pos,
-			  xgwa.width - display_offsetX, pos);
+	int s = CLUSTERSIZE * st->cellsize;
+	for (i = 1; i < st->cluster_numY; i++) {
+		int pos = (i * s) + st->display_offsetY - 1;
+		XDrawLine(dpy, st->buf, st->gc_draw,
+			  st->display_offsetX, pos,
+			  st->xgwa.width - st->display_offsetX, pos);
 	}
-	for (i = 1; i < cluster_numX; i++) {
-		int pos = (i * s) + display_offsetY - 1;
-		XDrawLine(dpy, buf, gc_draw,
-			  pos, display_offsetY,
-			  pos, xgwa.height - display_offsetY);
+	for (i = 1; i < st->cluster_numX; i++) {
+		int pos = (i * s) + st->display_offsetY - 1;
+		XDrawLine(dpy, st->buf, st->gc_draw,
+			  pos, st->display_offsetY,
+			  pos, st->xgwa.height - st->display_offsetY);
 	}
 }
 #endif
 
 
-char *progclass = "CLife";
+const char *progclass = "CLife";
 
-char *clife_defaults [] = {
+const char *life_hack_defaults [] = {
 	".background:		black",
 	".foreground:		white",
 	"*delay:		25000",
@@ -1365,7 +1483,7 @@ char *clife_defaults [] = {
 	NULL
 };
 
-XrmOptionDescRec clife_options [] = {
+const XrmOptionDescRec life_hack_options [] = {
 	{ "-delay",		".delay",	XrmoptionSepArg, NULL },
 	{ "-ncolors",		".ncolors",	XrmoptionSepArg, NULL },
 	{ "-maxage",		".maxage",	XrmoptionSepArg, NULL },
@@ -1382,41 +1500,48 @@ XrmOptionDescRec clife_options [] = {
 
 static
 void *
-clife_init(Display *dpy, Window window)
+life_hack_init(Display *dpy, Window window)
 {
-	life_display_init(dpy, window);
-	life_state_init(dpy);
-	life_pattern_init(dpy);
+	struct state *st = (struct state *)calloc(1, sizeof(*st));
+
+	life_display_init(st, dpy, window);
+	life_state_init(st, dpy);
+	life_pattern_init(st, dpy);
 
 #ifdef LIFE_SHOWGRID
-	life_display_grid(dpy);
+	life_display_grid(st, dpy);
 #endif
-	return dpy;
+	return st;
 }
 
 
 static
 unsigned long
-clife_draw(Display *dpy, Window window, void *closure)
+life_hack_draw(Display *dpy, Window window, void *closure)
 {
-	life_display_update(dpy, window);
-	life_state_update();
-	return delay;
+	struct state *st = (struct state *)closure;
+
+	life_display_update(st, dpy, window);
+	life_state_update(st);
+	return st->delay;
 }
 
 
 static
 void
-clife_reshape(Display *dpy, Window window, void *closure,
-		     unsigned int w, unsigned int h)
+life_hack_reshape(Display *dpy, Window window, void *closure,
+		  unsigned int w, unsigned int h)
 {
-	XGetWindowAttributes(dpy, window, &xgwa);
+	struct state *st = (struct state *)closure;
+
+	XGetWindowAttributes(dpy, window, &st->xgwa);
+	/* XXX Need to recalculate clusters/cells. */
 }
 
 
 static
 Bool
-clife_event(Display *dpy, Window window, void *closure, XEvent *event)
+life_hack_event(Display *dpy, Window window, void *closure, XEvent *event)
 {
 	return False;
 }
@@ -1424,10 +1549,15 @@ clife_event(Display *dpy, Window window, void *closure, XEvent *event)
 
 static
 void
-clife_free(Display *dpy, Window window, void *closure)
+life_hack_free(Display *dpy, Window window, void *closure)
 {
-	return;
+	struct state *st = (struct state *)closure;
+
+	life_pattern_free(st);
+	life_state_free(st);
+	life_display_free(st, dpy);
+	free(st);
 }
 
 
-XSCREENSAVER_MODULE ("CLife", clife)
+XSCREENSAVER_MODULE ("CLife", life_hack)

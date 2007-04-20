@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.17 2007/04/20 02:56:40 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.18 2007/04/20 03:01:37 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -464,7 +464,7 @@ life_cluster_update(struct state *st, struct cell_cluster *cluster)
 				 * reached its maximum age.
 				 * Note that count includes the cell itself.
 				 */
-				if ((count == 3 || count == 4)
+				if ((count == 3 || count == 4) &&
 				    (st->cellmaxage == 0 ||
 				     ++cluster->cellage[cellY][cellX] < st->cellmaxage))
 					continue;

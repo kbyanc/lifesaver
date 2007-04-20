@@ -9,7 +9,7 @@
  * software for any purpose.  It is provided "as is" without express or 
  * implied warranty.
  *
- * $kbyanc: life/xscreensaver/clife.c,v 1.16 2007/04/18 02:22:13 kbyanc Exp $
+ * $kbyanc: life/xscreensaver/clife.c,v 1.17 2007/04/20 02:56:40 kbyanc Exp $
  */
 
 /* Undefine the following before testing any code changes! */
@@ -97,8 +97,9 @@ static const struct pattern builtin_patterns[NUMPATTERNSBUILTIN] = {
  *	LIMIT_UPDATE	- Clusters dormant for more than this many iterations
  *			  will not be updated; useful for skipping static
  *			  debris.  Must be at least 1 more than LIMIT_DRAW.
- *	LIMIT_KEEPEMPTY	- Clusters with no cells are kept for this many cycles
- *			  before deleting.  Should be greater than LIMIT_UPDATE.
+ *	LIMIT_KEEPEMPTY	- Clusters with no cells are kept for this many
+ *			  cycles before deleting.  Should be greater than
+ *			  LIMIT_UPDATE.
  */
 #define	LIMIT_DRAW	1
 #define	LIMIT_UPDATE	LIMIT_DRAW + 1
@@ -156,7 +157,7 @@ struct cell_cluster {
 	struct cell_cluster	*neighbor[NUMDIRECTIONS];
 	cell			 oldcell[CLUSTERSIZE][CLUSTERSIZE];
 	cell			 cell[CLUSTERSIZE][CLUSTERSIZE];
-	u_int8_t		 cellage[CLUSTERSIZE][CLUSTERSIZE];
+	unsigned char		 cellage[CLUSTERSIZE][CLUSTERSIZE];
 };
 
 
@@ -341,8 +342,11 @@ life_state_update(struct state *st)
 			numactive++;
 			continue;
 		}
-		cluster->dormant++;
-		if (cluster->dormant > LIMIT_KEEPEMPTY)
+		if (cluster->dormant < LIMIT_KEEPEMPTY) {
+			cluster->dormant++;
+			continue;
+		}
+		if (cluster->numcells == 0)
 			life_cluster_delete(st, cluster);
 	}
 
@@ -376,7 +380,7 @@ life_cluster_wakeneighbor(struct state *st, const struct cell_cluster *cluster,
 void
 life_cluster_update(struct state *st, struct cell_cluster *cluster)
 {
-	static cell state[CLUSTERSIZE + 2][CLUSTERSIZE + 2];
+	cell state[CLUSTERSIZE + 2][CLUSTERSIZE + 2];
 	struct cell_cluster *neighbor;
 	int cellX, cellY;
 	int x, y, count;
@@ -460,7 +464,7 @@ life_cluster_update(struct state *st, struct cell_cluster *cluster)
 				 * reached its maximum age.
 				 * Note that count includes the cell itself.
 				 */
-				if ((count == 3 || count == 4) &&
+				if ((count == 3 || count == 4)
 				    (st->cellmaxage == 0 ||
 				     ++cluster->cellage[cellY][cellX] < st->cellmaxage))
 					continue;
@@ -500,8 +504,7 @@ life_cluster_update(struct state *st, struct cell_cluster *cluster)
 
 	if (births == 0 && deaths == 0) {
 		/* Dormant cluster. */
-		if (cluster->numcells == 0)
-			cluster->dormant++;
+		cluster->dormant++;
 		return;
 	}
 
@@ -707,6 +710,8 @@ life_cluster_draw(const struct state * const st, Display *dpy, Window window,
 				}
 			} else {
 				/* Live cell. */
+				if (cluster->oldcell[cellY][cellX] == c)
+					continue;	/* No change. */
 				XSetForeground(dpy, st->gc_draw,
 					       colors[c].pixel);
 			}
@@ -992,7 +997,7 @@ life_pattern_draw(struct state *st)
 		 * then we don't have a chance of succeeding.
 		 */
 		if (needed >= lastneeded)
-			goto noFit;
+			continue;
 
 		for (needY = 1; needY < needed; needY++) {
 			scanY = clusterY + needY;
@@ -1476,7 +1481,7 @@ const char *life_hack_defaults [] = {
 	".foreground:		white",
 	"*delay:		25000",
 	"*ncolors:		100",
-	"*maxAge:		255",
+	"*maxAge:		0",
 	"*cellSize:		5",
 	"*cellBorder:		True",
 	"*trails:		True",
